@@ -2,40 +2,49 @@
 namespace App\Radio\Remote;
 
 use App\Entity;
-use Doctrine\ORM\EntityManager;
-use GuzzleHttp\Client;
+use App\Settings;
 use GuzzleHttp\Psr7\Uri;
-use Monolog\Logger;
+use InvalidArgumentException;
+use NowPlaying\Result\Result;
 
 class AzuraRelay extends AbstractRemote
 {
-    public function updateNowPlaying(Entity\StationRemote $remote, $np_aggregate, bool $include_clients = false): array
-    {
+    public function updateNowPlaying(
+        Result $np,
+        Entity\StationRemote $remote,
+        bool $includeClients = false
+    ): Result {
         $station = $remote->getStation();
         $relay = $remote->getRelay();
 
         if (!$relay instanceof Entity\Relay) {
-            throw new \InvalidArgumentException('AzuraRelay remote must have a corresponding relay.');
+            throw new InvalidArgumentException('AzuraRelay remote must have a corresponding relay.');
         }
 
-        $relay_np = $relay->getNowplaying();
+        $npRawRelay = $relay->getNowplaying();
 
-        if (isset($relay_np[$station->getId()][$remote->getMount()])) {
-            $np_new = $relay_np[$station->getId()][$remote->getMount()];
+        if (isset($npRawRelay[$station->getId()][$remote->getMount()])) {
+            $npRaw = $npRawRelay[$station->getId()][$remote->getMount()];
 
-            $clients = ($include_clients)
-                ? $np_new['listeners']['clients']
-                : null;
+            $npNew = Result::fromArray($npRaw);
 
-            $np_aggregate = $this->_mergeNowPlaying(
-                $remote,
-                $np_aggregate,
-                $np_new,
-                $clients
-            );
+            $this->logger->debug('Response for remote relay',
+                ['remote' => $remote->getDisplayName(), 'response' => $npNew]);
+
+            $remote->setListenersTotal($np->listeners->total);
+            $remote->setListenersUnique($np->listeners->unique);
+            $this->em->persist($remote);
+            $this->em->flush();
+
+            return $np->merge($npNew);
         }
 
-        return $np_aggregate;
+        return $np;
+    }
+
+    protected function getAdapterType(): string
+    {
+        return '';
     }
 
     /**
@@ -47,30 +56,27 @@ class AzuraRelay extends AbstractRemote
         $relay = $remote->getRelay();
 
         if (!$relay instanceof Entity\Relay) {
-            throw new \InvalidArgumentException('AzuraRelay remote must have a corresponding relay.');
+            throw new InvalidArgumentException('AzuraRelay remote must have a corresponding relay.');
         }
 
         $base_url = new Uri($relay->getBaseUrl());
 
-        $fe_config = (array)$station->getFrontendConfig();
-        $radio_port = $fe_config['port'];
+        $fe_config = $station->getFrontendConfig();
+        $radio_port = $fe_config->getPort();
 
-        /** @var Entity\Repository\SettingsRepository $settings_repo */
-        $settings_repo = $this->em->getRepository(Entity\Settings::class);
+        $use_radio_proxy = $this->settingsRepo->getSetting('use_radio_proxy', 0);
 
-        $use_radio_proxy = $settings_repo->getSetting('use_radio_proxy', 0);
-
-        if ( $use_radio_proxy
-            || (!APP_IN_PRODUCTION && !APP_INSIDE_DOCKER)
+        if ($use_radio_proxy
+            || (!Settings::getInstance()->isProduction() && !Settings::getInstance()->isDocker())
             || 'https' === $base_url->getScheme()) {
             // Web proxy support.
             return (string)$base_url
-                ->withPath($base_url->getPath().'/radio/' . $radio_port . $remote->getMount());
-        } else {
-            // Remove port number and other decorations.
-            return (string)$base_url
-                ->withPort($radio_port)
-                ->withPath($remote->getMount());
+                ->withPath($base_url->getPath() . '/radio/' . $radio_port . $remote->getMount());
         }
+
+        // Remove port number and other decorations.
+        return (string)$base_url
+            ->withPort($radio_port)
+            ->withPath($remote->getMount());
     }
 }

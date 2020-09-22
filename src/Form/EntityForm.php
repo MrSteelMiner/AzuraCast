@@ -2,10 +2,13 @@
 namespace App\Form;
 
 use App\Entity\Station;
+use App\Exception;
 use App\Http\ServerRequest;
-use Azura\Doctrine\Repository;
-use Azura\Normalizer\DoctrineEntityNormalizer;
-use Doctrine\ORM\EntityManager;
+use App\Normalizer\DoctrineEntityNormalizer;
+use App\Settings;
+use Doctrine\ORM\EntityManagerInterface;
+use Doctrine\Persistence\ObjectRepository;
+use InvalidArgumentException;
 use Symfony\Component\Serializer\Normalizer\ObjectNormalizer;
 use Symfony\Component\Serializer\Serializer;
 use Symfony\Component\Validator\ConstraintViolation;
@@ -20,38 +23,27 @@ use Symfony\Component\Validator\Validator\ValidatorInterface;
  */
 class EntityForm extends Form
 {
-    /** @var EntityManager */
-    protected $em;
+    protected EntityManagerInterface $em;
 
-    /** @var Serializer */
-    protected $serializer;
+    protected Serializer $serializer;
 
-    /** @var ValidatorInterface */
-    protected $validator;
+    protected ValidatorInterface $validator;
 
     /** @var string The fully-qualified (::class) class name of the entity being managed. */
-    protected $entityClass;
+    protected string $entityClass;
 
     /** @var array The default context sent to form normalization/denormalization functions. */
-    protected $defaultContext = [];
+    protected array $defaultContext = [];
 
-    /** @var Station|null */
-    protected $station;
+    protected ?Station $station = null;
 
-    /**
-     * @param EntityManager $em
-     * @param Serializer $serializer
-     * @param ValidatorInterface $validator
-     * @param array $options
-     * @param array|null $defaults
-     */
     public function __construct(
-        EntityManager $em,
+        EntityManagerInterface $em,
         Serializer $serializer,
         ValidatorInterface $validator,
         array $options = [],
-        ?array $defaults = null)
-    {
+        ?array $defaults = null
+    ) {
         parent::__construct($options, $defaults);
 
         $this->em = $em;
@@ -59,37 +51,25 @@ class EntityForm extends Form
         $this->validator = $validator;
     }
 
-    /**
-     * @return string
-     */
     public function getEntityClass(): string
     {
         return $this->entityClass;
     }
 
-    /**
-     * @param string $entityClass
-     */
     public function setEntityClass(string $entityClass): void
     {
         $this->entityClass = $entityClass;
     }
 
-    /**
-     * @return EntityManager
-     */
-    public function getEntityManager(): EntityManager
+    public function getEntityManager(): EntityManagerInterface
     {
         return $this->em;
     }
 
-    /**
-     * @return Repository
-     */
-    public function getEntityRepository(): Repository
+    public function getEntityRepository(): ObjectRepository
     {
-        if (null === $this->entityClass) {
-            throw new \Azura\Exception('Entity class name is not specified.');
+        if (!isset($this->entityClass)) {
+            throw new Exception('Entity class name is not specified.');
         }
 
         return $this->em->getRepository($this->entityClass);
@@ -98,16 +78,17 @@ class EntityForm extends Form
     /**
      * @param ServerRequest $request
      * @param object|null $record
+     *
      * @return object|bool The modified object if edited/created, or `false` if not processed.
      */
     public function process(ServerRequest $request, $record = null)
     {
-        if (null === $this->entityClass) {
-            throw new \Azura\Exception('Entity class name is not specified.');
+        if (!isset($this->entityClass)) {
+            throw new Exception('Entity class name is not specified.');
         }
 
         if (null !== $record && !($record instanceof $this->entityClass)) {
-            throw new \InvalidArgumentException(sprintf('Record must be an instance of %s.', $this->entityClass));
+            throw new InvalidArgumentException(sprintf('Record must be an instance of %s.', $this->entityClass));
         }
 
         // Populate the form with existing values (if they exist).
@@ -123,7 +104,7 @@ class EntityForm extends Form
 
             $errors = $this->validator->validate($record);
             if (count($errors) > 0) {
-                foreach($errors as $error) {
+                foreach ($errors as $error) {
                     /** @var ConstraintViolation $error */
                     $field_name = $error->getPropertyPath();
 
@@ -137,10 +118,10 @@ class EntityForm extends Form
             }
 
             $this->em->persist($record);
-            $this->em->flush($record);
+            $this->em->flush();
 
             // Intentionally refresh the station entity in case it didn't refresh elsewhere.
-            if ($this->station instanceof Station && APP_TESTING_MODE) {
+            if ($this->station instanceof Station && Settings::getInstance()->isTesting()) {
                 $this->em->refresh($this->station);
             }
 
@@ -155,6 +136,7 @@ class EntityForm extends Form
      *
      * @param object $record
      * @param array $context
+     *
      * @return array
      */
     protected function _normalizeRecord($record, array $context = []): array
@@ -162,10 +144,20 @@ class EntityForm extends Form
         $context = array_merge($this->defaultContext, $context, [
             DoctrineEntityNormalizer::NORMALIZE_TO_IDENTIFIERS => true,
             ObjectNormalizer::ENABLE_MAX_DEPTH => true,
-            ObjectNormalizer::MAX_DEPTH_HANDLER => function ($innerObject, $outerObject, string $attributeName, string $format = null, array $context = array()) {
+            ObjectNormalizer::MAX_DEPTH_HANDLER => function (
+                $innerObject,
+                $outerObject,
+                string $attributeName,
+                string $format = null,
+                array $context = []
+            ) {
                 return $this->_displayShortenedObject($innerObject);
             },
-            ObjectNormalizer::CIRCULAR_REFERENCE_HANDLER => function ($object, string $format = null, array $context = array()) {
+            ObjectNormalizer::CIRCULAR_REFERENCE_HANDLER => function (
+                $object,
+                string $format = null,
+                array $context = []
+            ) {
                 return $this->_displayShortenedObject($object);
             },
         ]);
@@ -175,6 +167,7 @@ class EntityForm extends Form
 
     /**
      * @param object $object
+     *
      * @return mixed
      */
     protected function _displayShortenedObject($object)
@@ -192,6 +185,7 @@ class EntityForm extends Form
      * @param array $data
      * @param object|null $record
      * @param array $context
+     *
      * @return object
      */
     protected function _denormalizeToRecord($data, $record = null, array $context = []): object

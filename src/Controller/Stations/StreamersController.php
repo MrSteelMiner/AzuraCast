@@ -2,42 +2,39 @@
 namespace App\Controller\Stations;
 
 use App\Entity;
-use App\Form\EntityFormManager;
+use App\Exception\StationUnsupportedException;
 use App\Http\Response;
 use App\Http\ServerRequest;
 use App\Service\AzuraCastCentral;
-use Azura\Config;
+use App\Session\Flash;
+use Doctrine\ORM\EntityManagerInterface;
 use Psr\Http\Message\ResponseInterface;
 
-class StreamersController extends AbstractStationCrudController
+class StreamersController
 {
-    /** @var AzuraCastCentral */
-    protected $ac_central;
+    protected EntityManagerInterface $em;
 
-    /**
-     * @param EntityFormManager $formManager
-     * @param Config $config
-     * @param AzuraCastCentral $ac_central
-     */
+    protected AzuraCastCentral $ac_central;
+
+    protected Entity\Repository\SettingsRepository $settingsRepo;
+
     public function __construct(
-        EntityFormManager $formManager,
-        Config $config,
-        AzuraCastCentral $ac_central
+        EntityManagerInterface $em,
+        AzuraCastCentral $ac_central,
+        Entity\Repository\SettingsRepository $settingsRepo
     ) {
-        $form = $formManager->getForm(Entity\StationStreamer::class, $config->get('forms/streamer'));
-        parent::__construct($form);
-
+        $this->em = $em;
         $this->ac_central = $ac_central;
-        $this->csrf_namespace = 'stations_streamers';
+        $this->settingsRepo = $settingsRepo;
     }
 
-    public function indexAction(ServerRequest $request, Response $response, $station_id): ResponseInterface
+    public function __invoke(ServerRequest $request, Response $response): ResponseInterface
     {
         $station = $request->getStation();
         $backend = $request->getStationBackend();
 
         if (!$backend::supportsStreamers()) {
-            throw new \App\Exception\StationUnsupported;
+            throw new StationUnsupportedException;
         }
 
         $view = $request->getView();
@@ -49,8 +46,8 @@ class StreamersController extends AbstractStationCrudController
                 $this->em->persist($station);
                 $this->em->flush();
 
-                $request->getSession()->flash('<b>' . __('Streamers enabled!') . '</b><br>' . __('You can now set up streamer (DJ) accounts.'),
-                    'green');
+                $request->getFlash()->addMessage('<b>' . __('Streamers enabled!') . '</b><br>' . __('You can now set up streamer (DJ) accounts.'),
+                    Flash::SUCCESS);
 
                 return $response->withRedirect($request->getRouter()->fromHere('stations:streamers:index'));
             }
@@ -58,40 +55,14 @@ class StreamersController extends AbstractStationCrudController
             return $view->renderToResponse($response, 'stations/streamers/disabled');
         }
 
-        $be_settings = (array)$station->getBackendConfig();
-
-        /** @var Entity\Repository\SettingsRepository $settings_repo */
-        $settings_repo = $this->em->getRepository(Entity\Settings::class);
+        $be_settings = $station->getBackendConfig();
 
         return $view->renderToResponse($response, 'stations/streamers/index', [
-            'server_url' => $settings_repo->getSetting(Entity\Settings::BASE_URL, ''),
+            'server_url' => $this->settingsRepo->getSetting(Entity\Settings::BASE_URL, ''),
             'stream_port' => $backend->getStreamPort($station),
             'ip' => $this->ac_central->getIp(),
-            'streamers' => $station->getStreamers(),
             'dj_mount_point' => $be_settings['dj_mount_point'] ?? '/',
-            'csrf' => $request->getSession()->getCsrf()->generate($this->csrf_namespace),
+            'station_tz' => $station->getTimezone(),
         ]);
-    }
-
-    public function editAction(ServerRequest $request, Response $response, $station_id, $id = null): ResponseInterface
-    {
-        if (false !== $this->_doEdit($request, $id)) {
-            $request->getSession()->flash('<b>' . ($id ? __('Streamer updated.') : __('Streamer added.')) . '</b>', 'green');
-            return $response->withRedirect($request->getRouter()->fromHere('stations:streamers:index'));
-        }
-
-        return $request->getView()->renderToResponse($response, 'system/form_page', [
-            'form' => $this->form,
-            'render_mode' => 'edit',
-            'title' => $id ? __('Edit Streamer') : __('Add Streamer')
-        ]);
-    }
-
-    public function deleteAction(ServerRequest $request, Response $response, $station_id, $id, $csrf_token): ResponseInterface
-    {
-        $this->_doDelete($request, $id, $csrf_token);
-
-        $request->getSession()->flash('<b>' . __('Streamer deleted.') . '</b>', 'green');
-        return $response->withRedirect($request->getRouter()->fromHere('stations:streamers:index'));
     }
 }

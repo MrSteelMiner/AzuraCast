@@ -1,17 +1,22 @@
 <?php
 namespace App\Entity;
 
-use App\Validator\Constraints as AppAssert;
 use App\Annotations\AuditLog;
+use App\Normalizer\Annotation\DeepNormalize;
+use Doctrine\Common\Collections\ArrayCollection;
+use Doctrine\Common\Collections\Collection;
 use Doctrine\ORM\Mapping as ORM;
 use OpenApi\Annotations as OA;
+use Symfony\Component\Serializer\Annotation as Serializer;
 use Symfony\Component\Validator\Constraints as Assert;
 
 /**
  * Station streamers (DJ accounts) allowed to broadcast to a station.
  *
- * @ORM\Table(name="station_streamers")
- * @ORM\Entity(repositoryClass="App\Entity\Repository\StationStreamerRepository")
+ * @ORM\Table(name="station_streamers", uniqueConstraints={
+ *   @ORM\UniqueConstraint(name="username_unique_idx", columns={"station_id", "streamer_username"})
+ * })
+ * @ORM\Entity()
  * @ORM\HasLifecycleCallbacks
  *
  * @AuditLog\Auditable
@@ -57,9 +62,11 @@ class StationStreamer
     protected $streamer_username;
 
     /**
-     * @ORM\Column(name="streamer_password", type="string", length=50, nullable=false)
+     * @ORM\Column(name="streamer_password", type="string", length=255, nullable=false)
      *
-     * @AppAssert\StreamerPassword()
+     * @AuditLog\AuditIgnore()
+     *
+     * @Assert\NotBlank()
      * @OA\Property(example="")
      * @var string
      */
@@ -87,9 +94,17 @@ class StationStreamer
      * @OA\Property(example=true)
      * @var bool
      */
-    protected $is_active;
+    protected $is_active = true;
 
-	/**
+    /**
+     * @ORM\Column(name="enforce_schedule", type="boolean", nullable=false)
+     *
+     * @OA\Property(example=false)
+     * @var bool
+     */
+    protected $enforce_schedule = false;
+
+    /**
      * @ORM\Column(name="reactivate_at", type="integer", nullable=true)
      *
      * @AuditLog\AuditIgnore()
@@ -99,109 +114,95 @@ class StationStreamer
      */
     protected $reactivate_at;
 
+    /**
+     * @ORM\OneToMany(targetEntity="StationSchedule", mappedBy="streamer")
+     * @var Collection
+     *
+     * @DeepNormalize(true)
+     * @Serializer\MaxDepth(1)
+     * @OA\Property(
+     *     @OA\Items()
+     * )
+     */
+    protected $schedule_items;
+
     public function __construct(Station $station)
     {
         $this->station = $station;
-
-        $this->is_active = true;
+        $this->schedule_items = new ArrayCollection;
     }
 
-    /**
-     * @return int
-     */
     public function getId(): int
     {
         return $this->id;
     }
 
-    /**
-     * @return Station
-     */
     public function getStation(): Station
     {
         return $this->station;
     }
 
-    /**
-     * @return string
-     */
     public function getStreamerUsername(): string
     {
         return $this->streamer_username;
     }
 
-    /**
-     * @param string $streamer_username
-     */
-    public function setStreamerUsername(string $streamer_username)
+    public function setStreamerUsername(string $streamer_username): void
     {
-        $this->streamer_username = $this->_truncateString($streamer_username, 50);
+        $this->streamer_username = $this->truncateString($streamer_username, 50);
     }
 
-    /**
-     * @return string
-     */
     public function getStreamerPassword(): string
     {
-        return $this->streamer_password;
+        return '';
     }
 
-    /**
-     * @param string $streamer_password
-     */
-    public function setStreamerPassword(string $streamer_password)
+    public function setStreamerPassword(?string $streamer_password): void
     {
-        $this->streamer_password = $this->_truncateString($streamer_password, 50);
+        $streamer_password = trim($streamer_password);
+
+        if (!empty($streamer_password)) {
+            $this->streamer_password = password_hash($streamer_password, \PASSWORD_ARGON2ID);
+        }
+    }
+
+    public function authenticate(string $password): bool
+    {
+        return password_verify($password, $this->streamer_password);
     }
 
     /**
      * @AuditLog\AuditIdentifier()
-     *
      * @return string
      */
     public function getDisplayName(): string
     {
         return (!empty($this->display_name))
             ? $this->display_name
-            :$this->streamer_username;
+            : $this->streamer_username;
     }
 
-    /**
-     * @param null|string $display_name
-     */
     public function setDisplayName(?string $display_name): void
     {
-        $this->display_name = $this->_truncateString($display_name);
+        $this->display_name = $this->truncateString($display_name);
     }
 
-    /**
-     * @return null|string
-     */
     public function getComments(): ?string
     {
         return $this->comments;
     }
 
-    /**
-     * @param null|string $comments
-     */
-    public function setComments(string $comments = null)
+    public function setComments(string $comments = null): void
     {
         $this->comments = $comments;
     }
 
-    /**
-     * @return bool
-     */
-    public function getIsActive(): bool
+    public function isActive(): bool
     {
         return $this->is_active;
     }
 
-    /**
-     * @param bool $is_active
-     */
-    public function setIsActive(bool $is_active)
+    public function setIsActive(bool $is_active): void
     {
         $this->is_active = $is_active;
 
@@ -211,30 +212,37 @@ class StationStreamer
         }
     }
 
-	/**
-     * @return int|null
-     */
+    public function enforceSchedule(): bool
+    {
+        return $this->enforce_schedule;
+    }
+
+    public function setEnforceSchedule(bool $enforce_schedule): void
+    {
+        $this->enforce_schedule = $enforce_schedule;
+    }
+
     public function getReactivateAt(): ?int
     {
         return $this->reactivate_at;
     }
 
-    /**
-     * @param int|null $reactivate_at
-     */
-    public function setReactivateAt(?int $reactivate_at)
+    public function setReactivateAt(?int $reactivate_at): void
     {
         $this->reactivate_at = $reactivate_at;
     }
 
-    /**
-     * Deactivate this streamer for the specified period of time.
-     *
-     * @param int $seconds
-     */
-    public function deactivateFor(int $seconds)
+    public function deactivateFor(int $seconds): void
     {
         $this->is_active = false;
-        $this->reactivate_at = time()+$seconds;
+        $this->reactivate_at = time() + $seconds;
+    }
+
+    /**
+     * @return Collection|StationSchedule[]
+     */
+    public function getScheduleItems(): Collection
+    {
+        return $this->schedule_items;
     }
 }

@@ -25,10 +25,17 @@
 namespace App\Service;
 
 
+use App\Exception;
+use App\File;
 use App\Http\Response;
 use App\Http\ServerRequest;
+use Normalizer;
 use Psr\Http\Message\ResponseInterface;
 use Psr\Http\Message\UploadedFileInterface;
+use RuntimeException;
+use const PATHINFO_EXTENSION;
+use const PATHINFO_FILENAME;
+use const SCANDIR_SORT_NONE;
 
 class Flow
 {
@@ -38,6 +45,7 @@ class Flow
      * @param ServerRequest $request
      * @param Response $response
      * @param string|null $temp_dir
+     *
      * @return array|ResponseInterface|null
      */
     public static function process(
@@ -46,14 +54,14 @@ class Flow
         string $temp_dir = null
     ) {
         if (null === $temp_dir) {
-            $temp_dir = sys_get_temp_dir().'/uploads/';
+            $temp_dir = sys_get_temp_dir() . '/uploads/';
         }
 
         $params = $request->getParams();
 
         $flowIdentifier = $params['flowIdentifier'] ?? '';
         $flowChunkNumber = (int)($params['flowChunkNumber'] ?? 1);
-        $flowFilename = $params['flowFilename'] ?? ($flowIdentifier ?: 'upload-'.date('Ymd'));
+        $flowFilename = $params['flowFilename'] ?? ($flowIdentifier ?: 'upload-' . date('Ymd'));
 
         // init the destination file (format <filename.ext>.part<#chunk>
         $chunkBaseDir = $temp_dir . '/' . $flowIdentifier;
@@ -83,23 +91,26 @@ class Flow
             foreach ($files as $file) {
                 /** @var UploadedFileInterface $file */
                 if ($file->getError() !== UPLOAD_ERR_OK) {
-                    throw new \Azura\Exception('Error ' . $file->getError() . ' in file ' . $flowFilename);
+                    throw new Exception('Error ' . $file->getError() . ' in file ' . $flowFilename);
                 }
 
                 // the file is stored in a temporary directory
                 if (!is_dir($chunkBaseDir)) {
-                    @mkdir($chunkBaseDir, 0777, true);
+                    if (!mkdir($chunkBaseDir, 0777, true) && !is_dir($chunkBaseDir)) {
+                        throw new RuntimeException(sprintf('Directory "%s" was not created', $chunkBaseDir));
+                    }
                 }
 
                 if ($file->getSize() !== $currentChunkSize) {
-                    throw new \Azura\Exception('File size of '.$file->getSize().' does not match expected size of '.$currentChunkSize);
+                    throw new Exception('File size of ' . $file->getSize() . ' does not match expected size of ' . $currentChunkSize);
                 }
 
                 $file->moveTo($chunkPath);
             }
 
             if (self::allPartsExist($chunkBaseDir, $targetSize, $targetChunks)) {
-                return self::createFileFromChunks($temp_dir, $chunkBaseDir, $flowIdentifier, $flowFilename, $targetChunks);
+                return self::createFileFromChunks($temp_dir, $chunkBaseDir, $flowIdentifier, $flowFilename,
+                    $targetChunks);
             }
 
             // Return an OK status to indicate that the chunk upload itself succeeded.
@@ -115,6 +126,7 @@ class Flow
      * @param string $chunkBaseDir
      * @param int $targetSize
      * @param int $targetChunkNumber
+     *
      * @return bool
      */
     protected static function allPartsExist(
@@ -125,8 +137,8 @@ class Flow
         $chunkSize = 0;
         $chunkNumber = 0;
 
-        foreach (array_diff(scandir($chunkBaseDir, \SCANDIR_SORT_NONE), array('.', '..')) as $file) {
-            $chunkSize += filesize($chunkBaseDir.'/'.$file);
+        foreach (array_diff(scandir($chunkBaseDir, SCANDIR_SORT_NONE), ['.', '..']) as $file) {
+            $chunkSize += filesize($chunkBaseDir . '/' . $file);
             $chunkNumber++;
         }
 
@@ -151,13 +163,24 @@ class Flow
         string $originalFileName,
         int $numChunks
     ): array {
-        $originalFileName = \Azura\File::sanitizeFileName(basename($originalFileName));
-        $finalPath = $tempDir.'/'.$originalFileName;
+        $originalFileName = basename($originalFileName);
+        $originalFileName = Normalizer::normalize($originalFileName, Normalizer::FORM_KD);
+        $originalFileName = File::sanitizeFileName($originalFileName);
 
-        $fp = fopen($finalPath, 'w+');
+        // Truncate filenames whose lengths are longer than 255 characters, while preserving extension.
+        if (strlen($originalFileName) > 255) {
+            $ext = pathinfo($originalFileName, PATHINFO_EXTENSION);
+            $fileName = pathinfo($originalFileName, PATHINFO_FILENAME);
+            $fileName = substr($fileName, 0, 255 - 1 - strlen($ext));
+            $originalFileName = $fileName . '.' . $ext;
+        }
+
+        $finalPath = $tempDir . '/' . $originalFileName;
+
+        $fp = fopen($finalPath, 'wb+');
 
         for ($i = 1; $i <= $numChunks; $i++) {
-            fwrite($fp, file_get_contents($chunkBaseDir.'/'.$chunkIdentifier.'.part'.$i));
+            fwrite($fp, file_get_contents($chunkBaseDir . '/' . $chunkIdentifier . '.part' . $i));
         }
 
         fclose($fp);
@@ -171,21 +194,23 @@ class Flow
         }
 
         return [
-            'path'      => $finalPath,
-            'filename'  => $originalFileName,
-            'size'      => filesize($finalPath),
+            'path' => $finalPath,
+            'filename' => $originalFileName,
+            'size' => filesize($finalPath),
         ];
     }
 
     /**
      * Delete a directory RECURSIVELY
+     *
      * @param string $dir - directory path
+     *
      * @link http://php.net/manual/en/function.rmdir.php
      */
     protected static function rrmdir($dir): void
     {
         if (is_dir($dir)) {
-            $objects = array_diff(scandir($dir, \SCANDIR_SORT_NONE), array('.', '..'));
+            $objects = array_diff(scandir($dir, SCANDIR_SORT_NONE), ['.', '..']);
             foreach ($objects as $object) {
                 if (is_dir($dir . '/' . $object)) {
                     self::rrmdir($dir . '/' . $object);

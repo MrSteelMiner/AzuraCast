@@ -2,8 +2,9 @@
 
 # AzuraCast: A Self-Hosted Web Radio Manager
 
-[![Build Status](https://travis-ci.com/AzuraCast/AzuraCast.svg?branch=master)](https://travis-ci.com/AzuraCast/AzuraCast)
+[![Build Status](https://github.com/azuracast/azuracast/workflows/Build,%20Test%20and%20Publish/badge.svg)](https://github.com/AzuraCast/AzuraCast/actions)
 [![Apache 2.0 License](https://img.shields.io/github/license/azuracast/azuracast.svg)]()
+[![Ethical Open Source](https://img.shields.io/badge/open-ethical-%234baaaa)](https://ethicalsource.dev/definition/)
 [![Docker Pulls](https://img.shields.io/docker/pulls/azuracast/azuracast_radio.svg)](https://hub.docker.com/r/azuracast/azuracast_radio/)
 [![Twitter Follow](https://img.shields.io/twitter/follow/azuracast.svg?style=social&label=Follow)](https://twitter.com/azuracast)
 
@@ -88,14 +89,17 @@ For bug and error reports, we rely exclusively on our [GitHub Issues board](http
 
 Please keep in mind that AzuraCast is a free software project built and maintained by volunteers, so there may be some delays in getting back to you. We will make the absolute best effort possible to resolve your issues and answer your questions.
 
-## Follow Us on Social Media
+## Communities and Social Media
 
 We frequently post to social media any time there are significant updates to our software, security issues that users should be aware of, or upcoming changes to third-party software. You can get these updates in a more timely fashion by following our accounts:
 
 - On Twitter at [@AzuraCast](https://twitter.com/azuracast), or
 - On Mastodon at [@AzuraCast@fosstodon.org](https://fosstodon.org/@AzuraCast)
 
-We also have a [Slack channel](https://azuracast.com/slack) for developers, translators and radio station operators to help us collaborate in real time. You are welcome to join us and chat with us directly there.
+If you are an AzuraCast user, station owner, developer or other contributor, you can also join our two communities, where you can ask questions, share your station and more:
+
+- [Slack](https://azuracast.com/slack)
+- [Discord](https://azuracast.com/discord)
 
 Note that our social media channels aren't the best way to report issues to us; instead, you should use the GitHub issues instructions above, as this allows our whole team to help resolve and track the progress of the issue in one location.
 
@@ -106,8 +110,6 @@ We would like to thank the following organizations for their support of AzuraCas
 - [DigitalOcean](https://m.do.co/c/21612b90440f) for generously providing the server resources we use for our demonstration instance, our staging and testing environments, and more
 - [JetBrains](https://www.jetbrains.com/) for making our development faster, easier and more productive with tools like PhpStorm
 - [CrowdIn](https://crowdin.com/) for giving us a simple and powerful tool to help translate our application for users around the world
-- [GitKraken](https://www.gitkraken.com/invite/qBz1r2Kk) for providing an easy-to-use and powerful Git project management tool that our whole team can use.
-- [Sentry](https://sentry.io/) for providing a great way to aggregate errors being reported from AzuraCast installations around the web.
 - [Netlify](https://www.netlify.com/) for supporting open-source software like ours and for serving as the host of our primary [azuracast.com](https://www.azuracast.com/) web site.
 
 - The creators and maintainers of the many free and open-source tools that AzuraCast is built on, who have done so much to help move FOSS forward
@@ -116,6 +118,6 @@ We would like to thank the following organizations for their support of AzuraCas
 
 AzuraCast will always be available free of charge, but if you find the software useful and would like to support the project's lead developer, visit either of the links below. Your support is greatly appreciated.
 
-<a href="https://ko-fi.com/A736ATQ" target="_blank" title="Buy me a coffee!"><img height='32' style='border:0px;height:32px;' src='https://az743702.vo.msecnd.net/cdn/kofi1.png?v=b' border='0' alt='Buy Me a Coffee at ko-fi.com' /></a>
+<a href="https://ko-fi.com/silvereagle" target="_blank" title="Buy me a coffee!"><img height='32' style='border:0px;height:32px;' src='https://az743702.vo.msecnd.net/cdn/kofi1.png?v=b' border='0' alt='Buy Me a Coffee at ko-fi.com' /></a>
 
 <a href="https://www.patreon.com/bePatron?u=232463" target="_blank" title="Become a Patron"><img src="https://c5.patreon.com/external/logo/become_a_patron_button.png"></a>

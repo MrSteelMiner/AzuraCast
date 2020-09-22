@@ -1,49 +1,41 @@
 <?php
 namespace App\Form;
 
+use App\Config;
 use App\Entity;
 use App\Http\Router;
 use App\Http\ServerRequest;
-use Azura\Config;
-use Azura\Settings;
-use Doctrine\ORM\EntityManager;
+use App\Settings;
+use Doctrine\ORM\EntityManagerInterface;
+use InvalidArgumentException;
 use Symfony\Component\Serializer\Serializer;
 use Symfony\Component\Validator\Validator\ValidatorInterface;
 
 class StationWebhookForm extends EntityForm
 {
-    /** @var array */
-    protected $config;
+    protected array $config;
 
-    /** @var array */
-    protected $forms;
+    protected array $forms;
 
-    /**
-     * @param EntityManager $em
-     * @param Serializer $serializer
-     * @param ValidatorInterface $validator
-     * @param Config $config
-     * @param Router $router
-     * @param Settings $settings
-     */
     public function __construct(
-        EntityManager $em,
+        EntityManagerInterface $em,
         Serializer $serializer,
         ValidatorInterface $validator,
+        Settings $settings,
         Config $config,
-        Router $router,
-        Settings $settings
+        Router $router
     ) {
         $webhook_config = $config->get('webhooks');
 
         $webhook_forms = [];
         $config_injections = [
             'router' => $router,
-            'app_settings' => $settings,
             'triggers' => $webhook_config['triggers'],
+            'app_settings' => $settings,
         ];
-        foreach($webhook_config['webhooks'] as $webhook_key => $webhook_info) {
-            $webhook_forms[$webhook_key] = $config->get('forms/webhook/'.$webhook_key, $config_injections);
+
+        foreach ($webhook_config['webhooks'] as $webhook_key => $webhook_info) {
+            $webhook_forms[$webhook_key] = $config->get('forms/webhook/' . $webhook_key, $config_injections);
         }
 
         parent::__construct($em, $serializer, $validator);
@@ -53,17 +45,11 @@ class StationWebhookForm extends EntityForm
         $this->entityClass = Entity\StationWebhook::class;
     }
 
-    /**
-     * @return array
-     */
     public function getConfig(): array
     {
         return $this->config;
     }
 
-    /**
-     * @return array
-     */
     public function getForms(): array
     {
         return $this->forms;
@@ -72,7 +58,8 @@ class StationWebhookForm extends EntityForm
     public function process(ServerRequest $request, $record = null)
     {
         if (!$record instanceof Entity\StationWebhook) {
-            throw new \InvalidArgumentException(sprintf('Record is not an instance of %s', Entity\StationWebhook::class));
+            throw new InvalidArgumentException(sprintf('Record is not an instance of %s',
+                Entity\StationWebhook::class));
         }
 
         $this->configure($this->forms[$record->getType()]);

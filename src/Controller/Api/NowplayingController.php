@@ -3,10 +3,10 @@ namespace App\Controller\Api;
 
 use App\Entity;
 use App\Event\Radio\LoadNowPlaying;
+use App\EventDispatcher;
 use App\Http\Response;
 use App\Http\ServerRequest;
-use Azura\EventDispatcher;
-use Doctrine\ORM\EntityManager;
+use Doctrine\ORM\EntityManagerInterface;
 use OpenApi\Annotations as OA;
 use Psr\Http\Message\ResponseInterface;
 use Psr\SimpleCache\CacheInterface;
@@ -14,23 +14,22 @@ use Symfony\Component\EventDispatcher\EventSubscriberInterface;
 
 class NowplayingController implements EventSubscriberInterface
 {
-    /** @var EntityManager */
-    protected $em;
+    protected EntityManagerInterface $em;
 
-    /** @var CacheInterface */
-    protected $cache;
+    protected Entity\Repository\SettingsRepository $settingsRepo;
 
-    /** @var EventDispatcher */
-    protected $dispatcher;
+    protected CacheInterface $cache;
 
-    /**
-     * @param EntityManager $em
-     * @param CacheInterface $cache
-     * @param EventDispatcher $dispatcher
-     */
-    public function __construct(EntityManager $em, CacheInterface $cache, EventDispatcher $dispatcher)
-    {
+    protected EventDispatcher $dispatcher;
+
+    public function __construct(
+        EntityManagerInterface $em,
+        Entity\Repository\SettingsRepository $settingsRepo,
+        CacheInterface $cache,
+        EventDispatcher $dispatcher
+    ) {
         $this->em = $em;
+        $this->settingsRepo = $settingsRepo;
         $this->cache = $cache;
         $this->dispatcher = $dispatcher;
     }
@@ -60,7 +59,7 @@ class NowplayingController implements EventSubscriberInterface
                 ['loadFromCache', 5],
                 ['loadFromSettings', 0],
                 ['loadFromStations', -5],
-            ]
+            ],
         ];
     }
 
@@ -90,10 +89,11 @@ class NowplayingController implements EventSubscriberInterface
      *
      * @param ServerRequest $request
      * @param Response $response
-     * @param int|string $id
+     * @param int|string|null $station_id
+     *
      * @return ResponseInterface
      */
-    public function __invoke(ServerRequest $request, Response $response, $id = null): ResponseInterface
+    public function __invoke(ServerRequest $request, Response $response, $station_id = null): ResponseInterface
     {
         $router = $request->getRouter();
 
@@ -108,9 +108,9 @@ class NowplayingController implements EventSubscriberInterface
 
         $np = $event->getNowPlaying();
 
-        if (!empty($id)) {
+        if (!empty($station_id)) {
             foreach ($np as $np_row) {
-                if ($np_row->station->id == (int)$id || $np_row->station->shortcode === $id) {
+                if ($np_row->station->id == (int)$station_id || $np_row->station->shortcode === $station_id) {
                     $np_row->resolveUrls($router->getBaseUrl());
                     $np_row->now_playing->recalculate();
                     return $response->withJson($np_row);
@@ -123,9 +123,12 @@ class NowplayingController implements EventSubscriberInterface
 
         // If unauthenticated, hide non-public stations from full view.
         if ($request->getAttribute('user') === null) {
-            $np = array_filter($np, function($np_row) {
+            $np = array_filter($np, function ($np_row) {
                 return $np_row->station->is_public;
             });
+
+            // Prevent NP array from returning as an object.
+            $np = array_values($np);
         }
 
         foreach ($np as $np_row) {
@@ -136,26 +139,23 @@ class NowplayingController implements EventSubscriberInterface
         return $response->withJson($np);
     }
 
-    public function loadFromCache(LoadNowPlaying $event)
+    public function loadFromCache(LoadNowPlaying $event): void
     {
-        $event->setNowPlaying((array)$this->cache->get('api_nowplaying_data'), 'redis');
+        $event->setNowPlaying((array)$this->cache->get(Entity\Settings::NOWPLAYING), 'redis');
     }
 
-    public function loadFromSettings(LoadNowPlaying $event)
+    public function loadFromSettings(LoadNowPlaying $event): void
     {
-        /** @var Entity\Repository\SettingsRepository $settings_repo */
-        $settings_repo = $this->em->getRepository(Entity\Settings::class);
-
-        $event->setNowPlaying((array)$settings_repo->getSetting('nowplaying'), 'settings');
+        $event->setNowPlaying((array)$this->settingsRepo->getSetting(Entity\Settings::NOWPLAYING), 'settings');
     }
 
-    public function loadFromStations(LoadNowPlaying $event)
+    public function loadFromStations(LoadNowPlaying $event): void
     {
-        $nowplaying_db = $this->em->createQuery(/** @lang DQL */'SELECT s.nowplaying FROM App\Entity\Station s WHERE s.is_enabled = 1')
+        $nowplaying_db = $this->em->createQuery(/** @lang DQL */ 'SELECT s.nowplaying FROM App\Entity\Station s WHERE s.is_enabled = 1')
             ->getArrayResult();
 
         $np = [];
-        foreach($nowplaying_db as $np_row) {
+        foreach ($nowplaying_db as $np_row) {
             $np[] = $np_row['nowplaying'];
         }
 

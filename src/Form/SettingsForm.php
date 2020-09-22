@@ -1,64 +1,43 @@
 <?php
 namespace App\Form;
 
+use App\Config;
 use App\Entity;
 use App\Http\ServerRequest;
-use Doctrine\ORM\EntityManager;
+use App\Settings;
+use Doctrine\ORM\EntityManagerInterface;
 
-class SettingsForm extends Form
+class SettingsForm extends AbstractSettingsForm
 {
-    /** @var EntityManager */
-    protected $em;
-
-    /** @var Entity\Repository\SettingsRepository */
-    protected $settings_repo;
-
-    /**
-     * @param EntityManager $em
-     * @param array $form_config
-     */
     public function __construct(
-        EntityManager $em,
-        array $form_config)
-    {
-        parent::__construct($form_config);
+        EntityManagerInterface $em,
+        Entity\Repository\SettingsRepository $settingsRepo,
+        Settings $settings,
+        Config $config
+    ) {
+        $formConfig = $config->get('forms/settings', [
+            'settings' => $settings,
+        ]);
 
-        $this->em = $em;
-        $this->settings_repo = $em->getRepository(Entity\Settings::class);
+        parent::__construct(
+            $em,
+            $settingsRepo,
+            $settings,
+            $formConfig
+        );
     }
 
-    /**
-     * @return EntityManager
-     */
-    public function getEntityManager(): EntityManager
-    {
-        return $this->em;
-    }
-
-    /**
-     * @return Entity\Repository\SettingsRepository
-     */
-    public function getEntityRepository(): Entity\Repository\SettingsRepository
-    {
-        return $this->settings_repo;
-    }
-
-    /**
-     * @param ServerRequest $request
-     * @return bool
-     */
     public function process(ServerRequest $request): bool
     {
-        // Populate the form with existing values (if they exist).
-        $this->populate($this->settings_repo->fetchArray(false));
-
-        // Handle submission.
-        if ('POST' === $request->getMethod() && $this->isValid($request->getParsedBody())) {
-            $data = $this->getValues();
-            $this->settings_repo->setSettings($data);
-            return true;
+        if ('https' !== $request->getUri()->getScheme()) {
+            $alwaysUseSsl = $this->getField(Entity\Settings::ALWAYS_USE_SSL);
+            $alwaysUseSsl->setAttribute('disabled', 'disabled');
+            $alwaysUseSsl->setOption(
+                'description',
+                __('Visit this page from a secure connection to enforce secure URLs on all pages.')
+            );
         }
 
-        return false;
+        return parent::process($request);
     }
 }

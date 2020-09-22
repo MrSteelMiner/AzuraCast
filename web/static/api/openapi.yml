@@ -5,7 +5,7 @@ info:
   license:
     name: 'Apache 2.0'
     url: 'http://www.apache.org/licenses/LICENSE-2.0.html'
-  version: 0.9.6.1
+  version: 0.10.3
 servers:
   -
     url: 'https://demo.azuracast.com/api'
@@ -167,7 +167,7 @@ paths:
       tags:
         - 'Administration: Roles'
       description: 'List all current roles in the system.'
-      operationId: 'App\Controller\Api\Admin\RolesController::_denormalizeToRecord'
+      operationId: 'App\Controller\Api\Admin\RolesController::fromArray'
       responses:
         '200':
           description: Success
@@ -186,7 +186,7 @@ paths:
       tags:
         - 'Administration: Roles'
       description: 'Create a new role.'
-      operationId: 'App\Controller\Api\Admin\RolesController::_denormalizeToRecord'
+      operationId: 'App\Controller\Api\Admin\RolesController::fromArray'
       requestBody:
         content:
           application/json:
@@ -209,7 +209,7 @@ paths:
       tags:
         - 'Administration: Roles'
       description: 'Retrieve details for a single current role.'
-      operationId: 'App\Controller\Api\Admin\RolesController::_denormalizeToRecord'
+      operationId: 'App\Controller\Api\Admin\RolesController::fromArray'
       parameters:
         -
           name: id
@@ -235,7 +235,7 @@ paths:
       tags:
         - 'Administration: Roles'
       description: 'Update details of a single role.'
-      operationId: 'App\Controller\Api\Admin\RolesController::_denormalizeToRecord'
+      operationId: 'App\Controller\Api\Admin\RolesController::fromArray'
       parameters:
         -
           name: id
@@ -266,7 +266,7 @@ paths:
       tags:
         - 'Administration: Roles'
       description: 'Delete a single role.'
-      operationId: 'App\Controller\Api\Admin\RolesController::_denormalizeToRecord'
+      operationId: 'App\Controller\Api\Admin\RolesController::fromArray'
       parameters:
         -
           name: id
@@ -638,7 +638,7 @@ paths:
       tags:
         - 'Stations: Media'
       description: 'Returns the album art for a song, or a generic image.'
-      operationId: 'App\Controller\Api\Stations\ArtController::__invoke'
+      operationId: 'App\Controller\Api\Stations\Art\GetArtAction::__invoke'
       parameters:
         -
           $ref: '#/components/parameters/station_id_required'
@@ -1182,6 +1182,7 @@ paths:
       tags:
         - 'Stations: Queue'
       description: 'Retrieve details of a single queued item.'
+      operationId: 'App\Controller\Api\Stations\QueueController::viewRecord'
       parameters:
         -
           name: id
@@ -1209,6 +1210,7 @@ paths:
       tags:
         - 'Stations: Queue'
       description: 'Delete a single queued item.'
+      operationId: 'App\Controller\Api\Stations\QueueController::viewRecord'
       parameters:
         -
           name: id
@@ -1396,7 +1398,8 @@ paths:
           description: 'The requestable song ID'
           required: true
           schema:
-            type: int64
+            type: integer
+            format: int64
       responses:
         '200':
           description: Success
@@ -1404,6 +1407,42 @@ paths:
           description: 'Station not found'
         '403':
           description: 'Station does not support requests'
+  '/station/{station_id}/schedule':
+    get:
+      tags:
+        - 'Stations: Schedules'
+      description: 'Return upcoming and currently ongoing schedule entries.'
+      operationId: 'App\Controller\Api\Stations\ScheduleController::__invoke'
+      parameters:
+        -
+          $ref: '#/components/parameters/station_id_required'
+        -
+          name: now
+          in: query
+          description: 'The date/time to compare schedule items to. Defaults to the current date and time.'
+          required: false
+          schema:
+            type: string
+        -
+          name: rows
+          in: query
+          description: 'The number of upcoming/ongoing schedule entries to return. Defaults to 5.'
+          required: false
+          schema:
+            type: integer
+      responses:
+        '200':
+          description: Success
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/Api_StationSchedule'
+        '404':
+          description: 'Station not found'
+        '403':
+          description: 'Access denied'
   '/station/{station_id}/status':
     get:
       tags:
@@ -1811,9 +1850,11 @@ components:
         instance_name:
           description: 'AzuraCast Instance Name'
           type: string
+          nullable: true
         timezone:
           description: 'System Default Time Zone'
           type: string
+          nullable: true
         prefer_browser_url:
           description: 'Prefer Browser URL (If Available)'
           type: integer
@@ -1844,21 +1885,26 @@ components:
         homepage_redirect_url:
           description: 'Homepage Redirect URL'
           type: string
+          nullable: true
         default_album_art_url:
           description: 'Default Album Art URL'
           type: string
+          nullable: true
         hide_product_name:
           description: 'Hide AzuraCast Branding on Public Pages'
           type: integer
         custom_css_public:
           description: 'Custom CSS for Public Pages'
           type: string
+          nullable: true
         custom_js_public:
           description: 'Custom JS for Public Pages'
           type: string
+          nullable: true
         custom_css_internal:
           description: 'Custom CSS for Internal Pages'
           type: string
+          nullable: true
       type: object
     Api_DetailedSongHistory:
       allOf:
@@ -1893,6 +1939,7 @@ components:
           description: 'The HTML-formatted text description of the error.'
           type: string
           example: '<b>Error description.</b><br>Detailed error text.'
+          nullable: true
         extra_data:
           description: 'Stack traces and other supplemental data.'
           type: array
@@ -1919,7 +1966,7 @@ components:
         connected_on:
           description: 'UNIX timestamp that the user first connected.'
           type: integer
-          example: 1566003114
+          example: 1596303157
         connected_time:
           description: 'Number of seconds that the user has been connected.'
           type: integer
@@ -1950,9 +1997,15 @@ components:
         live:
           $ref: '#/components/schemas/Api_NowPlayingLive'
         now_playing:
-          $ref: '#/components/schemas/Api_NowPlayingCurrentSong'
+          nullable: true
+          oneOf:
+            -
+              $ref: '#/components/schemas/Api_NowPlayingCurrentSong'
         playing_next:
-          $ref: '#/components/schemas/Api_SongHistory'
+          nullable: true
+          oneOf:
+            -
+              $ref: '#/components/schemas/Api_SongHistory'
         song_history:
           type: array
           items:
@@ -1964,6 +2017,7 @@ components:
             - hit
             - database
             - station
+          nullable: true
       type: object
     Api_NowPlayingCurrentSong:
       allOf:
@@ -2005,6 +2059,11 @@ components:
           description: 'The current active streamer/DJ, if one is available.'
           type: string
           example: 'DJ Jazzy Jeff'
+        broadcast_start:
+          description: 'The start timestamp of the current broadcast, if one is available.'
+          type: integer
+          example: '1591548318'
+          nullable: true
       type: object
     Api_QueuedSong:
       allOf:
@@ -2015,11 +2074,12 @@ components:
             cued_at:
               description: 'UNIX timestamp when the item was cued for playback.'
               type: integer
-              example: 1566003114
+              example: 1596303157
             autodj_custom_uri:
               description: 'Custom AutoDJ playback URI, if it exists.'
               type: string
               example: ''
+              nullable: true
             links:
               type: array
               items:
@@ -2054,7 +2114,6 @@ components:
           example: ''
         art:
           description: 'URL to the album artwork (if available).'
-          type: string
           example: 'https://picsum.photos/1200/1200'
         custom_fields:
           type: array
@@ -2070,7 +2129,7 @@ components:
         played_at:
           description: 'UNIX timestamp when playback started.'
           type: integer
-          example: 1566003114
+          example: 1596303157
         duration:
           description: 'Duration of the song in seconds'
           type: integer
@@ -2079,6 +2138,12 @@ components:
           description: 'Indicates the playlist that the song was played from, if available, or empty string if not.'
           type: string
           example: 'Top 100'
+          nullable: true
+        streamer:
+          description: 'Indicates the current streamer that was connected, if available, or empty string if not.'
+          type: string
+          example: 'Test DJ'
+          nullable: true
         is_request:
           description: 'Indicates whether the song is a listener request.'
           type: boolean
@@ -2113,7 +2178,6 @@ components:
           example: liquidsoap
         listen_url:
           description: 'The full URL to listen to the default mount of the station'
-          type: string
           example: 'http://localhost:8000/radio.mp3'
         is_public:
           description: 'If the station is public (i.e. should be shown in listings of all stations)'
@@ -2143,6 +2207,21 @@ components:
               type: boolean
               example: true
           type: object
+    Api_StationOnDemand:
+      properties:
+        track_id:
+          description: 'Track ID unique identifier'
+          type: string
+          example: 1
+        download_url:
+          description: 'URL to download/play track.'
+          type: string
+          example: /api/station/1/ondemand/download/1
+        media:
+          $ref: '#/components/schemas/Api_Song'
+        playlist:
+          type: string
+      type: object
     Api_StationRemote:
       properties:
         id:
@@ -2155,16 +2234,17 @@ components:
           example: /radio.mp3
         url:
           description: 'Full listening URL specific to this mount'
-          type: string
           example: 'http://localhost:8000/radio.mp3'
         bitrate:
           description: 'Bitrate (kbps) of the broadcasted audio (if known)'
           type: integer
           example: 128
+          nullable: true
         format:
           description: 'Audio encoding format of broadcasted audio (if known)'
           type: string
           example: mp3
+          nullable: true
         listeners:
           $ref: '#/components/schemas/Api_NowPlayingListeners'
       type: object
@@ -2180,6 +2260,44 @@ components:
           example: /api/station/1/request/1
         song:
           $ref: '#/components/schemas/Api_Song'
+      type: object
+    Api_StationSchedule:
+      properties:
+        id:
+          description: 'Unique identifier for this schedule entry.'
+          type: integer
+          example: 1
+        type:
+          description: 'The type of this schedule entry.'
+          type: string
+          enum:
+            - playlist
+            - streamer
+          example: playlist
+        name:
+          description: 'Either the playlist or streamer''s display name.'
+          type: string
+          example: 'Example Schedule Entry'
+        start_timestamp:
+          description: 'The start time of the schedule entry, in UNIX format.'
+          type: integer
+          example: 1596303157
+        start:
+          description: 'The start time of the schedule entry, in ISO 8601 format.'
+          type: string
+          example: '020-02-19T03:00:00-06:00'
+        end_timestamp:
+          description: 'The end time of the schedule entry, in UNIX format.'
+          type: integer
+          example: 1596303157
+        end:
+          description: 'The start time of the schedule entry, in ISO 8601 format.'
+          type: string
+          example: '020-02-19T05:00:00-06:00'
+        is_now:
+          description: 'Whether the event is currently ongoing.'
+          type: boolean
+          example: true
       type: object
     Api_StationServiceStatus:
       properties:
@@ -2211,7 +2329,7 @@ components:
         timestamp:
           description: 'The current UNIX timestamp'
           type: integer
-          example: 1566003114
+          example: 1596303157
       type: object
     Api_Time:
       properties:
@@ -2253,11 +2371,9 @@ components:
     Api_UploadFile:
       properties:
         path:
-          description: 'The destination path of the uploaded file.'
           type: string
           example: relative/path/to/file.mp3
         file:
-          description: 'The base64-encoded contents of the file to upload.'
           type: string
           example: ''
       type: object
@@ -2270,6 +2386,11 @@ components:
         short_name:
           description: 'The programmatic name for the field. Can be auto-generated from the full name.'
           type: string
+          nullable: true
+        auto_assign:
+          description: 'An ID3v2 field to automatically assign to this value, if it exists in the media file.'
+          type: string
+          nullable: true
       type: object
     Relay:
       properties:
@@ -2282,15 +2403,16 @@ components:
         name:
           type: string
           example: Relay
+          nullable: true
         is_visible_on_public_pages:
           type: boolean
           example: true
         created_at:
           type: integer
-          example: 1566003114
+          example: 1596303157
         updated_at:
           type: integer
-          example: 1566003114
+          example: 1596303157
       type: object
     Role:
       properties:
@@ -2308,14 +2430,17 @@ components:
         id:
           type: integer
           example: 1
+          nullable: true
         name:
           description: 'The full display name of the station.'
           type: string
           example: 'AzuraTest Radio'
+          nullable: true
         short_name:
           description: 'The URL-friendly name for the station, typically auto-generated from the full station name.'
           type: string
           example: azuratest_radio
+          nullable: true
         is_enabled:
           description: 'If set to "false", prevents the station from broadcasting but leaves it in the database.'
           type: boolean
@@ -2324,36 +2449,46 @@ components:
           description: 'The frontend adapter (icecast,shoutcast,remote,etc)'
           type: string
           example: icecast
+          nullable: true
         frontend_config:
           description: 'An array containing station-specific frontend configuration'
           type: array
           items: {  }
+          nullable: true
         backend_type:
           description: 'The backend adapter (liquidsoap,etc)'
           type: string
           example: liquidsoap
+          nullable: true
         backend_config:
           description: 'An array containing station-specific backend configuration'
           type: array
           items: {  }
+          nullable: true
         description:
           type: string
           example: 'A sample radio station.'
+          nullable: true
         url:
           type: string
           example: 'https://demo.azuracast.com/'
+          nullable: true
         genre:
           type: string
           example: Various
+          nullable: true
         radio_base_dir:
           type: string
           example: /var/azuracast/stations/azuratest_radio
+          nullable: true
         radio_media_dir:
           type: string
           example: /var/azuracast/stations/azuratest_radio/media
+          nullable: true
         automation_settings:
           type: array
           items: {  }
+          nullable: true
         enable_requests:
           description: 'Whether listeners can request songs to play on this station.'
           type: boolean
@@ -2361,9 +2496,11 @@ components:
         request_delay:
           type: integer
           example: 5
+          nullable: true
         request_threshold:
           type: integer
           example: 15
+          nullable: true
         disconnect_deactivate_streamer:
           type: integer
           example: 0
@@ -2379,26 +2516,41 @@ components:
           description: 'Whether this station is visible as a public page and in a now-playing API response.'
           type: boolean
           example: true
+        enable_on_demand:
+          description: 'Whether this station has a public "on-demand" streaming and download page.'
+          type: boolean
+          example: true
         api_history_items:
           description: 'The number of "last played" history items to show for a given station in the Now Playing API responses.'
           type: integer
           example: 5
+          nullable: true
         storage_quota:
           type: string
           example: '50 GB'
+          nullable: true
         storage_quota_bytes:
           type: string
           example: '50000000000'
+          nullable: true
         storage_used:
           type: string
           example: '1 GB'
+          nullable: true
         storage_used_bytes:
           type: string
           example: '1000000000'
+          nullable: true
         timezone:
           description: 'The time zone that station operations should take place in.'
           type: string
           example: UTC
+          nullable: true
+        default_album_art_url:
+          description: 'The station-specific default album artwork URL.'
+          type: string
+          example: 'https://example.com/image.jpg'
+          nullable: true
       type: object
     StationMedia:
       properties:
@@ -2408,26 +2560,32 @@ components:
         song_id:
           type: string
           example: 098F6BCD4621D373CADE4E832627B4F6
+          nullable: true
         title:
           description: 'The name of the media file''s title.'
           type: string
           example: 'Test Song'
+          nullable: true
         artist:
           description: 'The name of the media file''s artist.'
           type: string
           example: 'Test Artist'
+          nullable: true
         album:
           description: 'The name of the media file''s album.'
           type: string
           example: 'Test Album'
+          nullable: true
         lyrics:
           description: 'Full lyrics of the track, if available.'
           type: string
           example: '...Never gonna give you up...'
+          nullable: true
         isrc:
           description: 'The track ISRC (International Standard Recording Code), used for licensing purposes.'
           type: string
           example: GBARL0600786
+          nullable: true
         length:
           description: 'The song duration in seconds.'
           type: integer
@@ -2436,39 +2594,57 @@ components:
           description: 'The formatted song duration (in mm:ss format)'
           type: string
           example: '4:00'
+          nullable: true
         path:
           description: 'The relative path of the media file.'
           type: string
           example: test.mp3
+          nullable: true
         mtime:
           description: 'The UNIX timestamp when the database was last modified.'
           type: integer
-          example: 1566003114
+          example: 1596303157
+          nullable: true
+        amplify:
+          description: 'The amount of amplification (in dB) to be applied to the radio source;'
+          type: number
+          format: float
+          example: -14
+          nullable: true
         fade_overlap:
           description: 'The length of time (in seconds) before the next song starts in the fade;'
           type: number
           format: float
           example: 2
+          nullable: true
         fade_in:
           description: 'The length of time (in seconds) to fade in the next track;'
           type: number
           format: float
           example: 3
+          nullable: true
         fade_out:
           description: 'The length of time (in seconds) to fade out the previous track;'
           type: number
           format: float
           example: 3
+          nullable: true
         cue_in:
           description: 'The length of time (in seconds) from the start of the track to start playing;'
           type: number
           format: float
           example: 30
+          nullable: true
         cue_out:
           description: 'The length of time (in seconds) from the CUE-IN of the track to stop playing;'
           type: number
           format: float
           example: 30
+          nullable: true
+        art_updated_at:
+          description: 'The latest time (UNIX timestamp) when album art was updated.'
+          type: integer
+          example: 1596303157
         playlists:
           items: {  }
       type: object
@@ -2483,6 +2659,7 @@ components:
         display_name:
           type: string
           example: '128kbps MP3'
+          nullable: true
         is_visible_on_public_pages:
           type: boolean
           example: true
@@ -2495,27 +2672,34 @@ components:
         fallback_mount:
           type: string
           example: /error.mp3
+          nullable: true
         relay_url:
           type: string
           example: 'http://radio.example.com:8000/radio.mp3'
+          nullable: true
         authhash:
           type: string
           example: ''
+          nullable: true
         enable_autodj:
           type: boolean
           example: true
         autodj_format:
           type: string
           example: mp3
+          nullable: true
         autodj_bitrate:
           type: integer
           example: 128
+          nullable: true
         custom_listen_url:
           type: string
           example: 'https://custom-listen-url.example.com/stream.mp3'
+          nullable: true
         frontend_config:
           type: string
           items: {  }
+          nullable: true
         listeners_unique:
           description: 'The most recent number of unique listeners.'
           type: integer
@@ -2530,6 +2714,7 @@ components:
         id:
           type: integer
           example: 1
+          nullable: true
         name:
           type: string
           example: 'Test Playlist'
@@ -2545,9 +2730,11 @@ components:
         remote_url:
           type: string
           example: 'http://remote-url.example.com/stream.mp3'
+          nullable: true
         remote_type:
           type: string
           example: stream
+          nullable: true
         remote_buffer:
           description: 'The total time (in seconds) that Liquidsoap should buffer remote URL streams.'
           type: integer
@@ -2568,19 +2755,14 @@ components:
         play_per_hour_minute:
           type: integer
           example: 15
-        schedule_start_time:
-          type: integer
-          example: 900
-        schedule_end_time:
-          type: integer
-          example: 2200
-        schedule_days:
-          type: string
-          example: '0,1,2,3'
         weight:
           type: integer
           example: 3
         include_in_requests:
+          type: boolean
+          example: true
+        include_in_on_demand:
+          description: 'Whether this playlist''s media is included in "on demand" download/streaming if enabled.'
           type: boolean
           example: true
         include_in_automation:
@@ -2589,6 +2771,11 @@ components:
         backend_options:
           type: string
           example: 'interrupt,loop_once,single_track,merge'
+        avoid_duplicates:
+          type: boolean
+          example: true
+        schedule_items:
+          items: {  }
       type: object
     StationRemote:
       properties:
@@ -2598,6 +2785,7 @@ components:
         display_name:
           type: string
           example: '128kbps MP3'
+          nullable: true
         is_visible_on_public_pages:
           type: boolean
           example: true
@@ -2610,30 +2798,43 @@ components:
         autodj_format:
           type: string
           example: mp3
+          nullable: true
         autodj_bitrate:
           type: integer
           example: 128
+          nullable: true
         custom_listen_url:
           type: string
           example: 'https://custom-listen-url.example.com/stream.mp3'
+          nullable: true
         url:
           type: string
           example: 'http://custom-url.example.com'
+          nullable: true
         mount:
           type: string
           example: /stream.mp3
+          nullable: true
+        admin_password:
+          type: string
+          example: password
+          nullable: true
         source_port:
           type: integer
           example: 8000
+          nullable: true
         source_mount:
           type: string
           example: /
+          nullable: true
         source_username:
           type: string
           example: source
+          nullable: true
         source_password:
           type: string
           example: password
+          nullable: true
         is_public:
           type: boolean
           example: false
@@ -2645,6 +2846,22 @@ components:
           description: 'The most recent number of total (non-unique) listeners.'
           type: integer
           example: 12
+      type: object
+    StationSchedule:
+      properties:
+        id:
+          type: integer
+          example: 1
+          nullable: true
+        start_time:
+          type: integer
+          example: 900
+        end_time:
+          type: integer
+          example: 2200
+        days:
+          type: string
+          example: '0,1,2,3'
       type: object
     StationStreamer:
       properties:
@@ -2660,25 +2877,41 @@ components:
         display_name:
           type: string
           example: 'Test DJ'
+          nullable: true
         comments:
           type: string
           example: 'This is a test DJ account.'
+          nullable: true
         is_active:
           type: boolean
           example: true
+        enforce_schedule:
+          type: boolean
+          example: false
         reactivate_at:
           type: integer
-          example: 1566003114
+          example: 1596303157
+          nullable: true
+        schedule_items:
+          items: {  }
+      type: object
+    StationStreamerBroadcast:
+      properties:
+        id:
+          type: integer
+          example: 1
       type: object
     StationWebhook:
       properties:
         id:
           type: integer
           example: 1
+          nullable: true
         name:
           description: 'The nickname of the webhook connector.'
           type: string
           example: 'Twitter Post'
+          nullable: true
         type:
           description: 'The type of webhook connector to use.'
           type: string
@@ -2699,7 +2932,7 @@ components:
           type: array
           items: {  }
       type: object
-    '':
+    Trait_UniqueId:
       properties:
         unique_id:
           description: 'A unique identifier associated with this record.'
@@ -2714,27 +2947,33 @@ components:
         email:
           type: string
           example: demo@azuracast.com
-        auth_password:
+          nullable: true
+        new_password:
           type: string
           example: ''
+          nullable: true
         name:
           type: string
           example: 'Demo Account'
+          nullable: true
         locale:
           type: string
           example: en_US
+          nullable: true
         theme:
           type: string
           example: dark
+          nullable: true
         two_factor_secret:
           type: string
           example: A1B2C3D4
+          nullable: true
         created_at:
           type: integer
-          example: 1566003114
+          example: 1596303157
         updated_at:
           type: integer
-          example: 1566003114
+          example: 1596303157
         roles:
           items: {  }
       type: object
@@ -2748,7 +2987,8 @@ components:
       description: 'The station ID'
       required: true
       schema:
-        type: int64
+        type: integer
+        format: int64
       example: 1
   securitySchemes:
     api_key:
@@ -2769,6 +3009,8 @@ tags:
     name: 'Stations: History'
   -
     name: 'Stations: Listeners'
+  -
+    name: 'Stations: Schedules'
   -
     name: 'Stations: Media'
   -

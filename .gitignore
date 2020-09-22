@@ -21,11 +21,22 @@ tmp/cache/*---*
 /util/fixtures/*
 /util/fixtures/**/*
 !/util/fixtures/.gitkeep
+/util/local_ssl/*
+!/util/local_ssl/.gitkeep
 /web/static/yarn-error.log
 /util/package_usage_report*
 
 # Composer-generated content
-/vendor/
+/vendor/*
+/vendor/**/*
+!/vendor/.gitkeep
+
+# NPM built content
+/web/static/dist/*
+/web/static/dist/**/*
+!/web/static/dist/.gitkeep
+/web/static/assets.json
+/web/static/webpack.json
 
 # Ansible deployment files
 /ansible/
@@ -36,6 +47,7 @@ tmp/cache/*---*
 # Docker files
 /docker-compose.yml
 /docker-compose.override.yml
+/.env
 
 # Backups
 /*.tar.gz

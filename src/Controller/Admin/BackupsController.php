@@ -1,153 +1,154 @@
 <?php
 namespace App\Controller\Admin;
 
+use App\Config;
+use App\Controller\AbstractLogViewerController;
 use App\Entity\Repository\SettingsRepository;
 use App\Entity\Settings;
+use App\Exception\NotFoundException;
+use App\Flysystem\FilesystemGroup;
+use App\Form\BackupSettingsForm;
 use App\Form\Form;
-use App\Form\SettingsForm;
 use App\Http\Response;
 use App\Http\ServerRequest;
+use App\Message\BackupMessage;
+use App\Session\Flash;
 use App\Sync\Task\Backup;
-use Azura\Config;
-use Doctrine\ORM\EntityManager;
 use League\Flysystem\Adapter\Local;
 use League\Flysystem\Filesystem;
 use Psr\Http\Message\ResponseInterface;
+use Symfony\Component\Messenger\MessageBus;
 
-class BackupsController
+class BackupsController extends AbstractLogViewerController
 {
-    /** @var SettingsForm */
-    protected $settings_form;
+    protected SettingsRepository $settingsRepo;
 
-    /** @var SettingsRepository */
-    protected $settings_repo;
+    protected Backup $backupTask;
 
-    /** @var Form */
-    protected $backup_run_form;
+    protected MessageBus $messageBus;
 
-    /** @var Backup */
-    protected $backup_task;
+    protected Filesystem $backupFs;
 
-    /** @var Filesystem */
-    protected $backup_fs;
+    protected string $csrfNamespace = 'admin_backups';
 
-    /** @var string */
-    protected $csrf_namespace = 'admin_backups';
-
-    /**
-     * @param EntityManager $em
-     * @param Config $config
-     * @param Backup $backup_task
-     */
     public function __construct(
-        EntityManager $em,
-        Config $config,
-        Backup $backup_task
+        SettingsRepository $settings_repo,
+        Backup $backup_task,
+        MessageBus $messageBus
     ) {
-        $settings_form = new SettingsForm($em, $config->get('forms/backup'));
-        $backup_run_form = new Form($config->get('forms/backup_run'));
+        $this->settingsRepo = $settings_repo;
+        $this->backupTask = $backup_task;
+        $this->backupFs = new Filesystem(new Local(Backup::BASE_DIR));
 
-        $this->settings_form = $settings_form;
-        $this->settings_repo = $settings_form->getEntityRepository();
-
-        $this->backup_run_form = $backup_run_form;
-
-        $this->backup_task = $backup_task;
-        $this->backup_fs = new Filesystem(new Local(Backup::BASE_DIR));
+        $this->messageBus = $messageBus;
     }
 
     public function __invoke(ServerRequest $request, Response $response): ResponseInterface
     {
         return $request->getView()->renderToResponse($response, 'admin/backups/index', [
-            'backups'       => $this->backup_fs->listContents('', false),
-            'is_enabled'    => (bool)$this->settings_repo->getSetting(Settings::BACKUP_ENABLED, false),
-            'last_run'      => $this->settings_repo->getSetting(Settings::BACKUP_LAST_RUN, 0),
-            'last_result'   => $this->settings_repo->getSetting(Settings::BACKUP_LAST_RESULT, 0),
-            'last_output'   => $this->settings_repo->getSetting(Settings::BACKUP_LAST_OUTPUT, ''),
-            'csrf'          => $request->getSession()->getCsrf()->generate($this->csrf_namespace),
+            'backups' => array_reverse($this->backupFs->listContents('', false)),
+            'is_enabled' => (bool)$this->settingsRepo->getSetting(Settings::BACKUP_ENABLED, false),
+            'last_run' => $this->settingsRepo->getSetting(Settings::BACKUP_LAST_RUN, 0),
+            'last_result' => $this->settingsRepo->getSetting(Settings::BACKUP_LAST_RESULT, 0),
+            'last_output' => $this->settingsRepo->getSetting(Settings::BACKUP_LAST_OUTPUT, ''),
+            'csrf' => $request->getCsrf()->generate($this->csrfNamespace),
         ]);
     }
 
-    public function configureAction(ServerRequest $request, Response $response): ResponseInterface
-    {
-        if (false !== $this->settings_form->process($request)) {
-            $request->getSession()->flash(__('Changes saved.'), 'green');
+    public function configureAction(
+        ServerRequest $request,
+        Response $response,
+        BackupSettingsForm $settingsForm
+    ): ResponseInterface {
+        if (false !== $settingsForm->process($request)) {
+            $request->getFlash()->addMessage(__('Changes saved.'), Flash::SUCCESS);
             return $response->withRedirect($request->getRouter()->fromHere('admin:backups:index'));
         }
 
         return $request->getView()->renderToResponse($response, 'system/form_page', [
-            'form' => $this->settings_form,
+            'form' => $settingsForm,
             'render_mode' => 'edit',
             'title' => __('Configure Backups'),
         ]);
     }
 
-    public function runAction(ServerRequest $request, Response $response): ResponseInterface
-    {
+    public function runAction(
+        ServerRequest $request,
+        Response $response,
+        Config $config
+    ): ResponseInterface {
+        $runForm = new Form($config->get('forms/backup_run'));
+
         // Handle submission.
-        if ('POST' === $request->getMethod() && $this->backup_run_form->isValid($request->getParsedBody())) {
-            $data = $this->backup_run_form->getValues();
+        if ($request->isPost() && $runForm->isValid($request->getParsedBody())) {
+            $data = $runForm->getValues();
 
-            [$result_code, $result_output] = $this->backup_task->runBackup($data['path'], $data['exclude_media']);
+            $tempFile = tempnam('/tmp', 'backup_');
 
-            $is_successful = (0 === $result_code);
+            $message = new BackupMessage();
+            $message->path = $data['path'];
+            $message->excludeMedia = $data['exclude_media'];
+            $message->outputPath = $tempFile;
+
+            $this->messageBus->dispatch($message);
 
             return $request->getView()->renderToResponse($response, 'admin/backups/run', [
-                'title'     => __('Run Manual Backup'),
-                'path'      => $data['path'],
-                'is_successful' => $is_successful,
-                'output'    => $result_output,
+                'title' => __('Run Manual Backup'),
+                'path' => $data['path'],
+                'outputLog' => basename($tempFile),
             ]);
         }
 
         return $request->getView()->renderToResponse($response, 'system/form_page', [
-            'form' => $this->backup_run_form,
+            'form' => $runForm,
             'render_mode' => 'edit',
             'title' => __('Run Manual Backup'),
         ]);
     }
 
-    public function downloadAction(ServerRequest $request, Response $response, $path): ResponseInterface
-    {
-        $path = $this->getFilePath($path);
-
-        $fh = $this->backup_fs->readStream($path);
-        $file_meta = $this->backup_fs->getMetadata($path);
-
-        try {
-            $file_mime = $this->backup_fs->getMimetype($path);
-        } catch(\Exception $e) {
-            $file_mime = 'application/octet-stream';
-        }
-
-        return $response->withFileDownload($fh, $path)
-            ->withNoCache()
-            ->withHeader('Content-Type', $file_mime)
-            ->withHeader('Content-Length', $file_meta['size'])
-            ->withHeader('X-Accel-Buffering', 'no');
+    public function logAction(
+        ServerRequest $request,
+        Response $response,
+        $path
+    ): ResponseInterface {
+        return $this->view($request, $response, '/tmp/' . $path, true);
     }
 
-    public function deleteAction(ServerRequest $request, Response $response, $path, $csrf_token): ResponseInterface
+    public function downloadAction(
+        ServerRequest $request,
+        Response $response,
+        $path
+    ): ResponseInterface {
+        $path = $this->getFilePath($path);
+        $path = 'backup://' . $path;
+
+        $fsGroup = new FilesystemGroup([
+            'backup' => $this->backupFs,
+        ]);
+
+        return $response->withNoCache()
+            ->withFlysystemFile($fsGroup, $path);
+    }
+
+    public function deleteAction(ServerRequest $request, Response $response, $path, $csrf): ResponseInterface
     {
-        $request->getSession()->getCsrf()->verify($csrf_token, $this->csrf_namespace);
+        $request->getCsrf()->verify($csrf, $this->csrfNamespace);
 
         $path = $this->getFilePath($path);
-        $this->backup_fs->delete($path);
+        $this->backupFs->delete($path);
 
-        $request->getSession()->flash('<b>' . __('Backup deleted.') . '</b>', 'green');
+        $request->getFlash()->addMessage('<b>' . __('Backup deleted.') . '</b>', Flash::SUCCESS);
         return $response->withRedirect($request->getRouter()->named('admin:backups:index'));
     }
 
-    protected function getFilePath($raw_path)
+    protected function getFilePath($raw_path): string
     {
-        $path = base64_decode($raw_path);
-        $path = basename($path);
+        $path = basename(base64_decode($raw_path));
 
-        if (!$this->backup_fs->has($path)) {
-            throw new \App\Exception\NotFound(__('Backup not found.'));
+        if (!$this->backupFs->has($path)) {
+            throw new NotFoundException(__('Backup not found.'));
         }
 
         return $path;
     }
-
 }

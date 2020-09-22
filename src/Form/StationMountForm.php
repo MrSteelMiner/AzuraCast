@@ -1,28 +1,21 @@
 <?php
 namespace App\Form;
 
+use App\Config;
 use App\Entity;
 use App\Entity\Station;
 use App\Http\ServerRequest;
 use App\Radio\Adapters;
-use Azura\Config;
-use Doctrine\ORM\EntityManager;
+use Doctrine\ORM\EntityManagerInterface;
 use Symfony\Component\Serializer\Serializer;
 use Symfony\Component\Validator\Validator\ValidatorInterface;
 
 class StationMountForm extends EntityForm
 {
-    /** @var array */
-    protected $form_configs;
+    protected array $form_configs;
 
-    /**
-     * @param EntityManager $em
-     * @param Serializer $serializer
-     * @param ValidatorInterface $validator
-     * @param Config $config
-     */
     public function __construct(
-        EntityManager $em,
+        EntityManagerInterface $em,
         Serializer $serializer,
         ValidatorInterface $validator,
         Config $config
@@ -43,7 +36,7 @@ class StationMountForm extends EntityForm
         $record = parent::process($request, $record);
 
         if ($record instanceof Entity\StationMount && $record->getIsDefault()) {
-            foreach($this->station->getMounts() as $mount) {
+            foreach ($this->station->getMounts() as $mount) {
                 /** @var Entity\StationMount $mount */
                 if ($mount->getId() !== $record->getId()) {
                     $mount->setIsDefault(false);

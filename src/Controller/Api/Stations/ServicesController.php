@@ -2,22 +2,23 @@
 namespace App\Controller\Api\Stations;
 
 use App\Entity;
+use App\Exception\Supervisor\NotRunningException;
 use App\Http\Response;
 use App\Http\ServerRequest;
+use App\Radio\AutoDJ;
+use App\Radio\Backend\Liquidsoap;
 use App\Radio\Configuration;
-use Doctrine\ORM\EntityManager;
+use Doctrine\ORM\EntityManagerInterface;
 use OpenApi\Annotations as OA;
 use Psr\Http\Message\ResponseInterface;
 
 class ServicesController
 {
-    /** @var EntityManager */
-    protected $em;
+    protected EntityManagerInterface $em;
 
-    /** @var Configuration */
-    protected $configuration;
+    protected Configuration $configuration;
 
-    public function __construct(EntityManager $em, Configuration $configuration)
+    public function __construct(EntityManagerInterface $em, Configuration $configuration)
     {
         $this->em = $em;
         $this->configuration = $configuration;
@@ -35,6 +36,7 @@ class ServicesController
      *
      * @param ServerRequest $request
      * @param Response $response
+     *
      * @return ResponseInterface
      */
     public function statusAction(ServerRequest $request, Response $response): ResponseInterface
@@ -62,6 +64,7 @@ class ServicesController
      *
      * @param ServerRequest $request
      * @param Response $response
+     *
      * @return ResponseInterface
      */
     public function restartAction(ServerRequest $request, Response $response): ResponseInterface
@@ -94,12 +97,15 @@ class ServicesController
      *
      * @param ServerRequest $request
      * @param Response $response
-     * @param string|int $station_id
      * @param string $do
+     *
      * @return ResponseInterface
      */
-    public function frontendAction(ServerRequest $request, Response $response, $station_id, $do = 'restart'): ResponseInterface
-    {
+    public function frontendAction(
+        ServerRequest $request,
+        Response $response,
+        $do = 'restart'
+    ): ResponseInterface {
         $station = $request->getStation();
         $frontend = $request->getStationFrontend();
 
@@ -108,26 +114,23 @@ class ServicesController
                 $frontend->stop($station);
 
                 return $response->withJson(new Entity\Api\Status(true, __('Frontend stopped.')));
-            break;
 
             case 'start':
                 $frontend->start($station);
 
                 return $response->withJson(new Entity\Api\Status(true, __('Frontend started.')));
-            break;
 
             case 'restart':
             default:
-                try
-                {
+                try {
                     $frontend->stop($station);
-                } catch(\App\Exception\Supervisor\NotRunning $e) {}
+                } catch (NotRunningException $e) {
+                }
 
                 $frontend->write($station);
                 $frontend->start($station);
 
                 return $response->withJson(new Entity\Api\Status(true, __('Frontend restarted.')));
-            break;
         }
     }
 
@@ -153,56 +156,64 @@ class ServicesController
      *
      * @param ServerRequest $request
      * @param Response $response
-     * @param string|int $station_id
+     * @param AutoDJ $autodj
      * @param string $do
+     *
      * @return ResponseInterface
      */
-    public function backendAction(ServerRequest $request, Response $response, $station_id, $do = 'restart'): ResponseInterface
-    {
+    public function backendAction(
+        ServerRequest $request,
+        Response $response,
+        AutoDJ $autodj,
+        $do = 'restart'
+    ): ResponseInterface {
         $station = $request->getStation();
         $backend = $request->getStationBackend();
 
         switch ($do) {
             case 'skip':
-                if (method_exists($backend, 'skip')) {
+                if ($backend instanceof Liquidsoap) {
+                    // Automatically queue the "next" song in the request queue.
+                    if (!$station->useManualAutoDJ()) {
+                        $nextSong = $autodj->annotateNextSong($station, true);
+                        if (!empty($nextSong)) {
+                            $backend->enqueue($station, $nextSong);
+                        }
+                    }
+
                     $backend->skip($station);
                 }
 
                 return $response->withJson(new Entity\Api\Status(true, __('Song skipped.')));
-            break;
 
             case 'disconnect':
-                if (method_exists($backend, 'disconnectStreamer')) {
+                if ($backend instanceof Liquidsoap) {
                     $backend->disconnectStreamer($station);
                 }
 
                 return $response->withJson(new Entity\Api\Status(true, __('Streamer disconnected.')));
-            break;
 
             case 'stop':
                 $backend->stop($station);
 
                 return $response->withJson(new Entity\Api\Status(true, __('Backend stopped.')));
-                break;
 
             case 'start':
                 $backend->start($station);
 
                 return $response->withJson(new Entity\Api\Status(true, __('Backend started.')));
-                break;
 
             case 'restart':
             default:
-                try
-                {
+                try {
                     $backend->stop($station);
-                } catch(\App\Exception\Supervisor\NotRunning $e) {}
+                } catch (NotRunningException $e) {
+                }
 
                 $backend->write($station);
                 $backend->start($station);
 
                 return $response->withJson(new Entity\Api\Status(true, __('Backend restarted.')));
-                break;
         }
     }
 

@@ -4,22 +4,14 @@ namespace App\Controller\Frontend;
 use App\Entity;
 use App\Http\Response;
 use App\Http\ServerRequest;
-use Doctrine\ORM\EntityManager;
 use Psr\Http\Message\ResponseInterface;
 
 class IndexController
 {
-    /** @var Entity\Repository\SettingsRepository */
-    protected $settings_repo;
+    protected Entity\Repository\SettingsRepository $settings_repo;
 
-    /**
-     * @param EntityManager $em
-     */
-    public function __construct(EntityManager $em)
+    public function __construct(Entity\Repository\SettingsRepository $settings_repo)
     {
-        /** @var Entity\Repository\SettingsRepository $settings_repo */
-        $settings_repo = $em->getRepository(Entity\Settings::class);
-
         $this->settings_repo = $settings_repo;
     }
 

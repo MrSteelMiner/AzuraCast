@@ -3,29 +3,30 @@ namespace App\Controller\Api\Stations;
 
 use App\ApiUtilities;
 use App\Entity;
+use App\Exception;
 use App\Http\Response;
 use App\Http\ServerRequest;
+use App\Paginator\QueryPaginator;
 use App\Utilities;
-use Azura\Doctrine\Paginator;
-use Doctrine\ORM\EntityManager;
+use Doctrine\ORM\EntityManagerInterface;
 use OpenApi\Annotations as OA;
 use Psr\Http\Message\ResponseInterface;
 
 class RequestsController
 {
-    /** @var EntityManager */
-    protected $em;
+    protected EntityManagerInterface $em;
 
-    /** @var ApiUtilities */
-    protected $api_utils;
+    protected Entity\Repository\StationRequestRepository $requestRepo;
 
-    /**
-     * @param EntityManager $em
-     * @param ApiUtilities $api_utils
-     */
-    public function __construct(EntityManager $em, ApiUtilities $api_utils)
-    {
+    protected ApiUtilities $api_utils;
+
+    public function __construct(
+        EntityManagerInterface $em,
+        Entity\Repository\StationRequestRepository $requestRepo,
+        ApiUtilities $api_utils
+    ) {
         $this->em = $em;
+        $this->requestRepo = $requestRepo;
         $this->api_utils = $api_utils;
     }
 
@@ -46,9 +47,14 @@ class RequestsController
      *   @OA\Response(response=403, description="Station does not support requests")
      * )
      *
-     * @inheritDoc
+     * @param ServerRequest $request
+     * @param Response $response
+     *
+     * @return ResponseInterface
+     * @throws Exception
+     * @throws Exception\InvalidRequestAttribute
      */
-    public function listAction(ServerRequest $request, Response $response, $station_id): ResponseInterface
+    public function listAction(ServerRequest $request, Response $response): ResponseInterface
     {
         $station = $request->getStation();
 
@@ -70,19 +76,18 @@ class RequestsController
             ->andWhere('sp.id IS NOT NULL')
             ->andWhere('sp.is_enabled = 1')
             ->andWhere('sp.include_in_requests = 1')
-            ->setParameter('station_id', $station_id);
+            ->setParameter('station_id', $station->getId());
 
         $params = $request->getQueryParams();
 
         if (!empty($params['sort'])) {
             $sort_fields = [
-                'song_title'    => 'sm.title',
-                'song_artist'   => 'sm.artist',
-                'song_album'    => 'sm.album',
+                'song_title' => 'sm.title',
+                'song_artist' => 'sm.artist',
+                'song_album' => 'sm.album',
             ];
 
-            foreach($params['sort'] as $sort_key => $sort_direction)
-            {
+            foreach ($params['sort'] as $sort_key => $sort_direction) {
                 if (isset($sort_fields[$sort_key])) {
                     $qb->addOrderBy($sort_fields[$sort_key], $sort_direction);
                 }
@@ -95,22 +100,21 @@ class RequestsController
         $search_phrase = trim($params['searchPhrase']);
         if (!empty($search_phrase)) {
             $qb->andWhere('(sm.title LIKE :query OR sm.artist LIKE :query OR sm.album LIKE :query)')
-                ->setParameter('query', '%'.$search_phrase.'%');
+                ->setParameter('query', '%' . $search_phrase . '%');
         }
 
-        $paginator = new Paginator($qb);
-        $paginator->setFromRequest($request);
+        $paginator = new QueryPaginator($qb, $request);
 
         $is_bootgrid = $paginator->isFromBootgrid();
         $router = $request->getRouter();
 
-        $paginator->setPostprocessor(function($media_row) use ($station_id, $is_bootgrid, $router) {
+        $paginator->setPostprocessor(function ($media_row) use ($station, $is_bootgrid, $router) {
             /** @var Entity\StationMedia $media_row */
             $row = new Entity\Api\StationRequest;
             $row->song = $media_row->api($this->api_utils);
             $row->request_id = $media_row->getUniqueId();
             $row->request_url = (string)$router->named('api:requests:submit', [
-                'station' => $station_id,
+                'station_id' => $station->getId(),
                 'media_id' => $media_row->getUniqueId(),
             ]);
 
@@ -137,7 +141,7 @@ class RequestsController
      *     in="path",
      *     required=true,
      *     @OA\Schema(
-     *         type="int64"
+     *         type="integer", format="int64"
      *     )
      *   ),
      *   @OA\Response(response=200, description="Success"),
@@ -145,9 +149,14 @@ class RequestsController
      *   @OA\Response(response=403, description="Station does not support requests")
      * )
      *
-     * @inheritDoc
+     * @param ServerRequest $request
+     * @param Response $response
+     * @param mixed $media_id
+     *
+     * @return ResponseInterface
+     * @throws Exception\InvalidRequestAttribute
      */
-    public function submitAction(ServerRequest $request, Response $response, $station_id, $media_id): ResponseInterface
+    public function submitAction(ServerRequest $request, Response $response, $media_id): ResponseInterface
     {
         $station = $request->getStation();
 
@@ -158,15 +167,19 @@ class RequestsController
                 ->withJson(new Entity\Api\Error(403, __('This station does not accept requests currently.')));
         }
 
-        $is_authenticated = !empty($request->getAttribute(ServerRequest::ATTR_USER));
+        try {
+            $user = $request->getUser();
+        } catch (Exception\InvalidRequestAttribute $e) {
+            $user = null;
+        }
+
+        $isAuthenticated = ($user instanceof Entity\User);
 
         try {
-            /** @var Entity\Repository\StationRequestRepository $request_repo */
-            $request_repo = $this->em->getRepository(Entity\StationRequest::class);
-            $request_repo->submit($station, $media_id, $is_authenticated);
+            $this->requestRepo->submit($station, $media_id, $isAuthenticated, $request->getIp());
 
             return $response->withJson(new Entity\Api\Status(true, __('Request submitted successfully.')));
-        } catch (\Azura\Exception $e) {
+        } catch (Exception $e) {
             return $response->withStatus(400)
                 ->withJson(new Entity\Api\Error(400, $e->getMessage()));
         }

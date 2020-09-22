@@ -24,9 +24,10 @@
     - mariadb
     - azuracast-db-install
     - ufw
-    - maxmind
+    - dbip
     - composer
     - influxdb
     - services
+    - azuracast-build
     - azuracast-setup
     - azuracast-cron

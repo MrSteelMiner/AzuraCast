@@ -74,7 +74,7 @@ class StationWebhook
     protected $is_enabled = true;
 
     /**
-     * @ORM\Column(name="triggers", type="json_array", nullable=true)
+     * @ORM\Column(name="triggers", type="json", nullable=true)
      *
      * @OA\Property(@OA\Items())
      *
@@ -83,7 +83,7 @@ class StationWebhook
     protected $triggers;
 
     /**
-     * @ORM\Column(name="config", type="json_array", nullable=true)
+     * @ORM\Column(name="config", type="json", nullable=true)
      *
      * @OA\Property(@OA\Items())
      *
@@ -92,7 +92,7 @@ class StationWebhook
     protected $config;
 
     /**
-     * @ORM\Column(name="metadata", type="json_array", nullable=true)
+     * @ORM\Column(name="metadata", type="json", nullable=true)
      *
      * @OA\Property(@OA\Items())
      *
@@ -106,17 +106,11 @@ class StationWebhook
         $this->type = $type;
     }
 
-    /**
-     * @return int|null
-     */
     public function getId(): ?int
     {
         return $this->id;
     }
 
-    /**
-     * @return Station
-     */
     public function getStation(): Station
     {
         return $this->station;
@@ -124,7 +118,6 @@ class StationWebhook
 
     /**
      * @AuditLog\AuditIdentifier
-     *
      * @return null|string
      */
     public function getName(): ?string
@@ -132,75 +125,48 @@ class StationWebhook
         return $this->name;
     }
 
-    /**
-     * @param null|string $name
-     */
     public function setName(?string $name): void
     {
-        $this->name = $this->_truncateString($name, 100);
+        $this->name = $this->truncateString($name, 100);
     }
 
-    /**
-     * @return string
-     */
     public function getType(): string
     {
         return $this->type;
     }
 
-    /**
-     * @return bool
-     */
     public function isEnabled(): bool
     {
         return $this->is_enabled;
     }
 
-    /**
-     * @return bool
-     */
     public function toggleEnabled(): bool
     {
         $this->is_enabled = !$this->is_enabled;
         return $this->is_enabled;
     }
 
-    /**
-     * @param bool $is_enabled
-     */
     public function setIsEnabled(bool $is_enabled): void
     {
         $this->is_enabled = $is_enabled;
     }
 
-    /**
-     * @return array
-     */
     public function getTriggers(): array
     {
         return (array)$this->triggers;
     }
 
-    /**
-     * @param array|null $triggers
-     */
-    public function setTriggers(array $triggers = null): void
+    public function setTriggers(?array $triggers = null): void
     {
         $this->triggers = $triggers;
     }
 
-    /**
-     * @return array
-     */
     public function getConfig(): array
     {
         return (array)$this->config;
     }
 
-    /**
-     * @param array|null $config
-     */
-    public function setConfig(array $config = null): void
+    public function setConfig(?array $config = null): void
     {
         $this->config = $config;
     }
@@ -225,6 +191,7 @@ class StationWebhook
      *
      * @param string $key
      * @param mixed|null $default
+     *
      * @return mixed|null
      */
     public function getMetadataKey(string $key, $default = null)

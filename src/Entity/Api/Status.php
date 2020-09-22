@@ -8,32 +8,32 @@ use OpenApi\Annotations as OA;
  */
 class Status
 {
-    public function __construct(
-        $success = true,
-        $message = 'Changes saved successfully.',
-        $formatted_message = null)
-    {
-        $this->success = (bool)$success;
-        $this->message = (string)$message;
-
-        $this->formatted_message = (string)($formatted_message ?? $message);
-    }
-
     /**
      * @OA\Property(example=true)
      * @var bool
      */
-    public $success;
+    public bool $success;
 
     /**
      * @OA\Property(example="Changes saved successfully.")
      * @var string
      */
-    public $message;
+    public string $message;
 
     /**
      * @OA\Property(example="<b>Changes saved successfully.</b>")
      * @var string
      */
-    public $formatted_message;
+    public string $formatted_message;
+
+    public function __construct(
+        $success = true,
+        $message = 'Changes saved successfully.',
+        $formatted_message = null
+    ) {
+        $this->success = (bool)$success;
+        $this->message = (string)$message;
+
+        $this->formatted_message = ($formatted_message ?? $message);
+    }
 }

@@ -5,20 +5,22 @@
 
 namespace App\Xml;
 
+use Laminas\Config\Exception;
+use Laminas\Config\Writer\Xml;
+use Laminas\Stdlib\ArrayUtils;
 use Traversable;
 use XMLWriter;
-use Zend\Config\Exception;
-use Zend\Stdlib\ArrayUtils;
 
-class Writer extends \Zend\Config\Writer\Xml
+class Writer extends Xml
 {
     /**
      * toString(): defined by Writer interface.
      *
-     * @see    WriterInterface::toString()
-     * @param  mixed $config
+     * @param mixed $config
      * @param string $base_element
+     *
      * @return string
+     * @see    WriterInterface::toString()
      */
     public function toString($config, $base_element = 'zend-config')
     {
@@ -34,8 +36,9 @@ class Writer extends \Zend\Config\Writer\Xml
     /**
      * processConfig(): defined by AbstractWriter.
      *
-     * @param  array $config
+     * @param array $config
      * @param string $base_element
+     *
      * @return string
      */
     public function processConfig(array $config, $base_element = 'zend-config')
@@ -53,7 +56,7 @@ class Writer extends \Zend\Config\Writer\Xml
 
         foreach ($config as $sectionName => $data) {
             if (!is_array($data)) {
-                if (substr($sectionName, 0, 1) == '@') {
+                if (strpos($sectionName, '@') === 0) {
                     $writer->writeAttribute(substr($sectionName, 1), (string)$data);
                 } else {
                     $writer->writeElement($sectionName, (string)$data);
@@ -72,9 +75,10 @@ class Writer extends \Zend\Config\Writer\Xml
     /**
      * Add a branch to an XML object recursively.
      *
-     * @param  string $branchName
-     * @param  array $config
-     * @param  XMLWriter $writer
+     * @param string $branchName
+     * @param array $config
+     * @param XMLWriter $writer
+     *
      * @return void
      * @throws Exception\RuntimeException
      */
@@ -103,16 +107,12 @@ class Writer extends \Zend\Config\Writer\Xml
                 } else {
                     $writer->writeElement($branchName, (string)$value);
                 }
+            } elseif (is_array($value)) {
+                $this->addBranch($key, $value, $writer);
+            } elseif (substr($key, 0, 1) == '@') {
+                $writer->writeAttribute(substr($key, 1), (string)$value);
             } else {
-                if (is_array($value)) {
-                    $this->addBranch($key, $value, $writer);
-                } else {
-                    if (substr($key, 0, 1) == '@') {
-                        $writer->writeAttribute(substr($key, 1), (string)$value);
-                    } else {
-                        $writer->writeElement($key, (string)$value);
-                    }
-                }
+                $writer->writeElement($key, (string)$value);
             }
         }
 
@@ -121,13 +121,16 @@ class Writer extends \Zend\Config\Writer\Xml
         }
     }
 
-    protected function _attributesFirst($a, $b) {
-        if (substr($a, 0, 1) == '@') {
+    protected function _attributesFirst($a, $b): int
+    {
+        if (strpos($a, '@') === 0) {
             return -1;
-        } else if (substr($b, 0, 1) == '@') {
-            return 1;
-        } else {
-            return 0;
         }
+
+        if (substr($b, 0, 1) == '@') {
+            return 1;
+        }
+
+        return 0;
     }
 }

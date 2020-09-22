@@ -5,12 +5,18 @@
 
 namespace App;
 
+use RecursiveDirectoryIterator;
+use RecursiveIteratorIterator;
+use SplFileInfo;
+use function is_array;
+
 class Utilities
 {
     /**
      * Generate a randomized password of specified length.
      *
      * @param int $char_length
+     *
      * @return string
      */
     public static function generatePassword($char_length = 8): string
@@ -25,10 +31,25 @@ class Utilities
         $password = '';
         for ($i = 1; $i <= $char_length; $i++) {
             $char_array = $chars[$i % 3];
-            $password .= $char_array[mt_rand(0, count($char_array) - 1)];
+            $password .= $char_array[random_int(0, count($char_array) - 1)];
         }
 
         return str_shuffle($password);
+    }
+
+    /**
+     * Truncate URL in text-presentable format (i.e. "http://www.example.com" becomes "example.com")
+     *
+     * @param string $url
+     * @param int $length
+     *
+     * @return string
+     */
+    public static function truncateUrl($url, $length = 40): string
+    {
+        $url = str_replace(['http://', 'https://', 'www.'], '', $url);
+
+        return self::truncateText(rtrim($url, '/'), $length);
     }
 
     /**
@@ -37,6 +58,7 @@ class Utilities
      * @param string $text
      * @param int $limit
      * @param string $pad
+     *
      * @return string
      */
     public static function truncateText($text, $limit = 80, $pad = '...'): string
@@ -66,6 +88,7 @@ class Utilities
      * @param int $width
      * @param string $break
      * @param bool $cut
+     *
      * @return string
      */
     public static function mbWordwrap($str, $width = 75, $break = "\n", $cut = false): string
@@ -103,20 +126,6 @@ class Utilities
     }
 
     /**
-     * Truncate URL in text-presentable format (i.e. "http://www.example.com" becomes "example.com")
-     *
-     * @param string $url
-     * @param int $length
-     * @return string
-     */
-    public static function truncateUrl($url, $length = 40): string
-    {
-        $url = str_replace(['http://', 'https://', 'www.'], '', $url);
-
-        return self::truncateText(rtrim($url, '/'), $length);
-    }
-
-    /**
      * Sort a supplied array (the first argument) by one or more indices, specified in this format:
      * arrayOrderBy($data, [ 'index_name', SORT_ASC, 'index2_name', SORT_DESC ])
      *
@@ -124,6 +133,7 @@ class Utilities
      *
      * @param array $data
      * @param array $args
+     *
      * @return mixed
      */
     public static function arrayOrderBy($data, array $args = [])
@@ -174,41 +184,37 @@ class Utilities
     /**
      * Recursively remove a directory and its contents.
      *
-     * @param string $dir
-     */
-    public static function rmdirRecursive($dir): void
-    {
-        if (is_dir($dir)) {
-            $files = array_diff(scandir($dir, \SCANDIR_SORT_NONE), ['.', '..']);
-            foreach ($files as $file) {
-                self::rmdirRecursive($dir . '/' . $file);
-            }
-
-            @rmdir($dir);
-        } else {
-            @unlink($dir);
-        }
-    }
-
-    /**
-     * Attempt to fetch the most likely "external" IP for this instance.
+     * @param string $source
      *
-     * @return false|string
+     * @return bool
      */
-    public static function getPublicIp()
+    public static function rmdirRecursive(string $source): bool
     {
-        if (APP_INSIDE_DOCKER) {
-            if (APP_IN_PRODUCTION) {
-                $public_ip = @file_get_contents('http://ipecho.net/plain');
-                if (!empty($public_ip)) {
-                    return $public_ip;
-                }
-            }
-
-            return 'localhost';
+        if (empty($source) || !file_exists($source)) {
+            return true;
         }
 
-        return gethostbyname(gethostname()) ?? 'localhost';
+        if (is_file($source) || is_link($source)) {
+            return @unlink($source);
+        }
+
+        $files = new RecursiveIteratorIterator(
+            new RecursiveDirectoryIterator($source, RecursiveDirectoryIterator::SKIP_DOTS),
+            RecursiveIteratorIterator::CHILD_FIRST
+        );
+
+        foreach ($files as $fileinfo) {
+            /** @var SplFileInfo $fileinfo */
+            if ('link' !== $fileinfo->getType() && $fileinfo->isDir()) {
+                if (!rmdir($fileinfo->getRealPath())) {
+                    return false;
+                }
+            } elseif (!unlink($fileinfo->getRealPath())) {
+                return false;
+            }
+        }
+
+        return rmdir($source);
     }
 
     /**
@@ -231,6 +237,7 @@ class Utilities
      * @param array|object $array
      * @param string $separator
      * @param null $prefix
+     *
      * @return array
      */
     public static function flattenArray($array, $separator = '.', $prefix = null): array
@@ -238,7 +245,7 @@ class Utilities
         if (!is_array($array)) {
             if (is_object($array)) {
                 // Quick and dirty conversion from object to array.
-                $array = json_decode(json_encode($array), true);
+                $array = json_decode(json_encode($array, JSON_THROW_ON_ERROR), true, 512, JSON_THROW_ON_ERROR);
             } else {
                 return $array;
             }
@@ -246,9 +253,9 @@ class Utilities
 
         $return = [];
 
-        foreach($array as $key => $value) {
-            $return_key = $prefix ? $prefix.$separator.$key : $key;
-            if (\is_array($value)) {
+        foreach ($array as $key => $value) {
+            $return_key = $prefix ? $prefix . $separator . $key : $key;
+            if (is_array($value)) {
                 $return = array_merge($return, self::flattenArray($value, $separator, $return_key));
             } else {
                 $return[$return_key] = $value;

@@ -2,8 +2,16 @@
 namespace App\Radio\Frontend;
 
 use App\Entity;
+use App\Logger;
+use App\Radio\CertificateLocator;
+use App\Settings;
 use App\Utilities;
-use NowPlaying\Exception;
+use App\Xml\Reader;
+use App\Xml\Writer;
+use Exception;
+use GuzzleHttp\Psr7\Uri;
+use NowPlaying\Adapter\AdapterFactory;
+use NowPlaying\Result\Result;
 use Psr\Http\Message\UriInterface;
 
 class Icecast extends AbstractFrontend
@@ -13,36 +21,49 @@ class Icecast extends AbstractFrontend
     public const LOGLEVEL_WARN = 2;
     public const LOGLEVEL_ERROR = 1;
 
-    public function getNowPlaying(Entity\Station $station, $payload = null, $include_clients = true): array
+    public function getNowPlaying(Entity\Station $station, bool $includeClients = true): Result
     {
-        $fe_config = (array)$station->getFrontendConfig();
-        $radio_port = $fe_config['port'];
+        $feConfig = $station->getFrontendConfig();
+        $radioPort = $feConfig->getPort();
 
-        $base_url = 'http://' . (APP_INSIDE_DOCKER ? 'stations' : 'localhost') . ':' . $radio_port;
+        $baseUrl = 'http://' . (Settings::getInstance()->isDocker() ? 'stations' : 'localhost') . ':' . $radioPort;
 
-        $np_adapter = new \NowPlaying\Adapter\Icecast($base_url, $this->http_client);
-        $np_adapter->setAdminPassword($fe_config['admin_pw']);
+        $npAdapter = $this->adapterFactory->getAdapter(
+            AdapterFactory::ADAPTER_ICECAST,
+            $baseUrl
+        );
 
-        $np_final = \NowPlaying\Adapter\AdapterAbstract::NOWPLAYING_EMPTY;
-        $np_final['listeners']['clients'] = [];
+        $npAdapter->setAdminPassword($feConfig->getAdminPassword());
+
+        $defaultResult = Result::blank();
+        $otherResults = [];
 
         try {
-            foreach($station->getMounts() as $mount) {
+            foreach ($station->getMounts() as $mount) {
                 /** @var Entity\StationMount $mount */
-                $np_final = $this->_processNowPlayingForMount(
-                    $mount,
-                    $np_final,
-                    $np_adapter->getNowPlaying($mount->getName()),
-                    $include_clients ? $np_adapter->getClients($mount->getName(), true) : null
-                );
+                $result = $npAdapter->getNowPlaying($mount->getName(), $includeClients);
+
+                $mount->setListenersTotal($result->listeners->total);
+                $mount->setListenersUnique($result->listeners->unique);
+                $this->em->persist($mount);
+
+                if ($mount->getIsDefault()) {
+                    $defaultResult = $result;
+                } else {
+                    $otherResults[] = $result;
+                }
             }
 
-            $this->logger->debug('Aggregated NowPlaying response', ['response' => $np_final]);
-        } catch(Exception $e) {
-            $this->logger->error(sprintf('NowPlaying adapter error: %s', $e->getMessage()));
+            $this->em->flush();
+
+            foreach ($otherResults as $otherResult) {
+                $defaultResult = $defaultResult->merge($otherResult);
+            }
+        } catch (Exception $e) {
+            Logger::getInstance()->error(sprintf('NowPlaying adapter error: %s', $e->getMessage()));
         }
 
-        return $np_final;
+        return $defaultResult;
     }
 
     public function read(Entity\Station $station): bool
@@ -52,90 +73,6 @@ class Icecast extends AbstractFrontend
         return true;
     }
 
-    public function write(Entity\Station $station): bool
-    {
-        $config = $this->_getDefaults($station);
-
-        $frontend_config = (array)$station->getFrontendConfig();
-
-        if (!empty($frontend_config['port'])) {
-            $config['listen-socket']['port'] = $frontend_config['port'];
-        }
-
-        if (!empty($frontend_config['source_pw'])) {
-            $config['authentication']['source-password'] = $frontend_config['source_pw'];
-        }
-
-        if (!empty($frontend_config['admin_pw'])) {
-            $config['authentication']['admin-password'] = $frontend_config['admin_pw'];
-        }
-
-        if (!empty($frontend_config['relay_pw'])) {
-            $config['authentication']['relay-password'] = $frontend_config['relay_pw'];
-        }
-
-        if (!empty($frontend_config['streamer_pw'])) {
-            foreach ($config['mount'] as &$mount) {
-                if (!empty($mount['password'])) {
-                    $mount['password'] = $frontend_config['streamer_pw'];
-                }
-            }
-        }
-
-        if (!empty($frontend_config['max_listeners'])) {
-            $config['limits']['clients'] = $frontend_config['max_listeners'];
-        }
-
-        if (!empty($frontend_config['custom_config'])) {
-            $custom_conf = $this->_processCustomConfig($frontend_config['custom_config']);
-            if (!empty($custom_conf)) {
-                $config = self::arrayMergeRecursiveDistinct($config, $custom_conf);
-            }
-        }
-
-        // Set any unset values back to the DB config.
-        $station->setFrontendConfigDefaults($this->_loadFromConfig($station, $config));
-
-        $this->em->persist($station);
-        $this->em->flush();
-
-        $config_path = $station->getRadioConfigDir();
-        $icecast_path = $config_path . '/icecast.xml';
-
-        $writer = new \App\Xml\Writer;
-        $icecast_config_str = $writer->toString($config, 'icecast');
-
-        // Strip the first line (the XML charset)
-        $icecast_config_str = substr($icecast_config_str, strpos($icecast_config_str, "\n") + 1);
-
-        file_put_contents($icecast_path, $icecast_config_str);
-        return true;
-    }
-
-    /*
-     * Process Management
-     */
-
-    public function getCommand(Entity\Station $station): ?string
-    {
-        if ($binary = self::getBinary()) {
-            $config_path = $station->getRadioConfigDir() . '/icecast.xml';
-            return $binary . ' -c ' . $config_path;
-        }
-        return '/bin/false';
-    }
-
-    public function getAdminUrl(Entity\Station $station, UriInterface $base_url = null): UriInterface
-    {
-        $public_url = $this->getPublicUrl($station, $base_url);
-        return $public_url
-            ->withPath($public_url->getPath().'/admin.html');
-    }
-
-    /*
-     * Configuration
-     */
-
     protected function _getConfig(Entity\Station $station)
     {
         $config_path = $station->getRadioConfigDir();
@@ -144,7 +81,7 @@ class Icecast extends AbstractFrontend
         $defaults = $this->_getDefaults($station);
 
         if (file_exists($icecast_path)) {
-            $reader = new \App\Xml\Reader;
+            $reader = new Reader;
             $data = $reader->fromFile($icecast_path);
 
             return self::arrayMergeRecursiveDistinct($defaults, $data);
@@ -153,31 +90,27 @@ class Icecast extends AbstractFrontend
         return $defaults;
     }
 
-    protected function _loadFromConfig(Entity\Station $station, $config)
+    /*
+     * Process Management
+     */
+
+    protected function _getDefaults(Entity\Station $station): array
     {
-        $frontend_config = (array)$station->getFrontendConfig();
-
-        return [
-            'custom_config' => $frontend_config['custom_config'],
-            'source_pw' => $config['authentication']['source-password'],
-            'admin_pw' => $config['authentication']['admin-password'],
-            'relay_pw' => $config['authentication']['relay-password'],
-            'streamer_pw' => $config['mount'][0]['password'],
-            'max_listeners' => $config['limits']['clients'],
-        ];
-    }
-
-    protected function _getDefaults(Entity\Station $station)
-    {
-        /** @var Entity\Repository\SettingsRepository $settings_repo */
-        $settings_repo = $this->em->getRepository(Entity\Settings::class);
-
         $config_dir = $station->getRadioConfigDir();
+        $settings = Settings::getInstance();
+
+        $settingsBaseUrl = $this->settingsRepo->getSetting(Entity\Settings::BASE_URL, 'http://localhost');
+        if (strpos($settingsBaseUrl, 'http') !== 0) {
+            $settingsBaseUrl = 'http://' . $settingsBaseUrl;
+        }
+        $baseUrl = new Uri($settingsBaseUrl);
+
+        $certPaths = CertificateLocator::findCertificate();
 
         $defaults = [
             'location' => 'AzuraCast',
             'admin' => 'icemaster@localhost',
-            'hostname' => $settings_repo->getSetting('base_url', 'localhost'),
+            'hostname' => $baseUrl->getHost(),
             'limits' => [
                 'clients' => 2500,
                 'sources' => $station->getMounts()->count(),
@@ -212,26 +145,22 @@ class Icecast extends AbstractFrontend
                     '@source' => '/',
                     '@dest' => '/status.xsl',
                 ],
-                'ssl-private-key' => '/etc/nginx/ssl/ssl.key',
-                'ssl-certificate' => '/etc/nginx/ssl/ssl.crt',
+                'ssl-private-key' => $certPaths->getKeyPath(),
+                'ssl-certificate' => $certPaths->getCertPath(),
                 'ssl-allowed-ciphers' => 'ECDH+AESGCM:DH+AESGCM:ECDH+AES256:DH+AES256:ECDH+AES128:DH+AES:RSA+AESGCM:RSA+AES:!aNULL:!MD5:!DSS',
-                'x-forwarded-for' => '127.0.0.1',
+                'deny-ip' => $this->writeIpBansFile($station),
+                'x-forwarded-for' => $settings->isDocker() ? '172.*.*.*' : '127.0.0.1',
             ],
             'logging' => [
                 'accesslog' => 'icecast_access.log',
                 'errorlog' => '/dev/stderr',
-                'loglevel' => (APP_IN_PRODUCTION) ? self::LOGLEVEL_WARN : self::LOGLEVEL_INFO,
+                'loglevel' => $settings->isProduction() ? self::LOGLEVEL_WARN : self::LOGLEVEL_INFO,
                 'logsize' => 10000,
             ],
             'security' => [
                 'chroot' => 0,
             ],
         ];
-
-        // Allow all sources to set the X-Forwarded-For header
-        if (APP_INSIDE_DOCKER && APP_DOCKER_REVISION >= 3) {
-            $defaults['paths']['all-x-forwarded-for'] = '1';
-        }
 
         foreach ($station->getMounts() as $mount_row) {
             /** @var Entity\StationMount $mount_row */
@@ -278,20 +207,6 @@ class Icecast extends AbstractFrontend
         return $defaults;
     }
 
-    public static function getBinary()
-    {
-        $new_path = '/usr/local/bin/icecast';
-        $legacy_path = '/usr/bin/icecast2';
-
-        if (APP_INSIDE_DOCKER || file_exists($new_path)) {
-            return $new_path;
-        } elseif (file_exists($legacy_path)) {
-            return $legacy_path;
-        } else {
-            return false;
-        }
-    }
-
     /**
      * array_merge_recursive does indeed merge arrays, but it converts values with duplicate
      * keys to arrays rather than overwriting the value in the first array with the duplicate
@@ -313,9 +228,11 @@ class Icecast extends AbstractFrontend
      *
      * @param array $array1
      * @param array $array2
+     *
      * @return array
      * @author Daniel <daniel (at) danielsmedegaardbuus (dot) dk>
      * @author Gabriel Sobrinho <gabriel (dot) sobrinho (at) gmail (dot) com>
+     * @noinspection PhpParameterByRefIsNotUsedAsReferenceInspection
      */
     public static function arrayMergeRecursiveDistinct(array &$array1, array &$array2): array
     {
@@ -329,5 +246,122 @@ class Icecast extends AbstractFrontend
         }
 
         return $merged;
+    }
+
+    /*
+     * Configuration
+     */
+
+    protected function _loadFromConfig(Entity\Station $station, $config): array
+    {
+        $frontend_config = $station->getFrontendConfig();
+
+        return [
+            Entity\StationFrontendConfiguration::CUSTOM_CONFIGURATION => $frontend_config->getCustomConfiguration(),
+            Entity\StationFrontendConfiguration::SOURCE_PASSWORD => $config['authentication']['source-password'],
+            Entity\StationFrontendConfiguration::ADMIN_PASSWORD => $config['authentication']['admin-password'],
+            Entity\StationFrontendConfiguration::RELAY_PASSWORD => $config['authentication']['relay-password'],
+            Entity\StationFrontendConfiguration::STREAMER_PASSWORD => $config['mount'][0]['password'],
+            Entity\StationFrontendConfiguration::MAX_LISTENERS => $config['limits']['clients'],
+        ];
+    }
+
+    public function write(Entity\Station $station): bool
+    {
+        $config = $this->_getDefaults($station);
+
+        $frontend_config = $station->getFrontendConfig();
+
+        $port = $frontend_config->getPort();
+        if (null !== $port) {
+            $config['listen-socket']['port'] = $port;
+        }
+
+        $sourcePw = $frontend_config->getSourcePassword();
+        if (!empty($sourcePw)) {
+            $config['authentication']['source-password'] = $sourcePw;
+        }
+
+        $adminPw = $frontend_config->getAdminPassword();
+        if (!empty($adminPw)) {
+            $config['authentication']['admin-password'] = $adminPw;
+        }
+
+        $relayPw = $frontend_config->getRelayPassword();
+        if (!empty($relayPw)) {
+            $config['authentication']['relay-password'] = $relayPw;
+        }
+
+        $streamerPw = $frontend_config->getStreamerPassword();
+        if (!empty($streamerPw)) {
+            foreach ($config['mount'] as &$mount) {
+                if (!empty($mount['password'])) {
+                    $mount['password'] = $streamerPw;
+                }
+            }
+        }
+
+        $maxListeners = $frontend_config->getMaxListeners();
+        if (null !== $maxListeners) {
+            $config['limits']['clients'] = $maxListeners;
+        }
+
+        $customConfig = $frontend_config->getCustomConfiguration();
+        if (!empty($customConfig)) {
+            $custom_conf = $this->_processCustomConfig($customConfig);
+            if (!empty($custom_conf)) {
+                $config = self::arrayMergeRecursiveDistinct($config, $custom_conf);
+            }
+        }
+
+        // Set any unset values back to the DB config.
+        $station->setFrontendConfigDefaults($this->_loadFromConfig($station, $config));
+
+        $this->em->persist($station);
+        $this->em->flush();
+
+        $config_path = $station->getRadioConfigDir();
+        $icecast_path = $config_path . '/icecast.xml';
+
+        $writer = new Writer;
+        $icecast_config_str = $writer->toString($config, 'icecast');
+
+        // Strip the first line (the XML charset)
+        $icecast_config_str = substr($icecast_config_str, strpos($icecast_config_str, "\n") + 1);
+
+        file_put_contents($icecast_path, $icecast_config_str);
+        return true;
+    }
+
+    public function getCommand(Entity\Station $station): ?string
+    {
+        if ($binary = self::getBinary()) {
+            $config_path = $station->getRadioConfigDir() . '/icecast.xml';
+            return $binary . ' -c ' . $config_path;
+        }
+        return '/bin/false';
+    }
+
+    public static function getBinary()
+    {
+        $new_path = '/usr/local/bin/icecast';
+        $legacy_path = '/usr/bin/icecast2';
+
+        if (Settings::getInstance()->isDocker() || file_exists($new_path)) {
+            return $new_path;
+        }
+
+        if (file_exists($legacy_path)) {
+            return $legacy_path;
+        } else {
+            return false;
+        }
+    }
+
+    public function getAdminUrl(Entity\Station $station, UriInterface $base_url = null): UriInterface
+    {
+        $public_url = $this->getPublicUrl($station, $base_url);
+        return $public_url
+            ->withPath($public_url->getPath() . '/admin.html');
     }
 }

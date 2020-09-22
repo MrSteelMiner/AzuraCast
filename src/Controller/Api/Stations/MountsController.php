@@ -2,13 +2,14 @@
 namespace App\Controller\Api\Stations;
 
 use App\Entity;
+use App\Exception\StationUnsupportedException;
 use App\Http\ServerRequest;
 use OpenApi\Annotations as OA;
 
 class MountsController extends AbstractStationApiCrudController
 {
-    protected $entityClass = Entity\StationMount::class;
-    protected $resourceRouteName = 'api:stations:mount';
+    protected string $entityClass = Entity\StationMount::class;
+    protected string $resourceRouteName = 'api:stations:mount';
 
     /**
      * @OA\Get(path="/station/{station_id}/mounts",
@@ -97,13 +98,13 @@ class MountsController extends AbstractStationApiCrudController
     /**
      * @inheritDoc
      */
-    protected function _getStation(ServerRequest $request): Entity\Station
+    protected function getStation(ServerRequest $request): Entity\Station
     {
-        $station = parent::_getStation($request);
+        $station = parent::getStation($request);
 
         $frontend = $request->getStationFrontend();
         if (!$frontend::supportsMounts()) {
-            throw new \App\Exception\StationUnsupported;
+            throw new StationUnsupportedException;
         }
 
         return $station;

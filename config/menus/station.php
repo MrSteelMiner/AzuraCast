@@ -5,11 +5,13 @@
 
 use App\Acl;
 
-return function(\App\Event\BuildStationMenu $e) {
+return function (App\Event\BuildStationMenu $e) {
     $router = $e->getRouter();
     $station = $e->getStation();
     $backend = $e->getStationBackend();
     $frontend = $e->getStationFrontend();
+
+    $settings = $e->getSettings();
 
     $e->merge([
         'start_station' => [
@@ -18,6 +20,7 @@ return function(\App\Event\BuildStationMenu $e) {
             'icon' => 'refresh',
             'url' => $router->fromHere('api:stations:restart'),
             'class' => 'api-call text-success',
+            'confirm' => __('Restart broadcasting? This will disconnect any current listeners.'),
             'visible' => !$station->getHasStarted(),
             'permission' => Acl::STATION_BROADCASTING,
         ],
@@ -27,7 +30,8 @@ return function(\App\Event\BuildStationMenu $e) {
             'icon' => 'refresh',
             'url' => $router->fromHere('api:stations:restart'),
             'class' => 'api-call text-warning',
-            'visible' => $station->getNeedsRestart(),
+            'confirm' => __('Restart broadcasting? This will disconnect any current listeners.'),
+            'visible' => $station->getHasStarted() && $station->getNeedsRestart(),
             'permission' => Acl::STATION_BROADCASTING,
         ],
         'profile' => [
@@ -38,9 +42,16 @@ return function(\App\Event\BuildStationMenu $e) {
         'public' => [
             'label' => __('Public Page'),
             'icon' => 'public',
-            'url' => $router->named('public:index', ['station' => $station->getShortName()]),
+            'url' => $router->named('public:index', ['station_id' => $station->getShortName()]),
             'external' => true,
             'visible' => $station->getEnablePublicPage(),
+        ],
+        'ondemand' => [
+            'label' => __('On-Demand Media'),
+            'icon' => 'cloud_download',
+            'url' => $router->named('public:ondemand', ['station_id' => $station->getShortName()]),
+            'external' => true,
+            'visible' => $station->getEnableOnDemand(),
         ],
         'files' => [
             'label' => __('Music Files'),
@@ -66,7 +77,8 @@ return function(\App\Event\BuildStationMenu $e) {
         'web_dj' => [
             'label' => __('Web DJ'),
             'icon' => 'surround_sound',
-            'url' => $router->named('public:dj', ['station' => $station->getShortName()]),
+            'url' => $router->named('public:dj', ['station_id' => $station->getShortName()], [], true)
+                ->withScheme('https'),
             'visible' => $station->getEnablePublicPage() && $station->getEnableStreamers(),
             'external' => true,
         ],
@@ -127,17 +139,29 @@ return function(\App\Event\BuildStationMenu $e) {
                     'url' => $router->fromHere('stations:reports:soundexchange'),
                     'visible' => $frontend::supportsListenerDetail(),
                 ],
-            ]
+            ],
         ],
         'utilities' => [
             'label' => __('Utilities'),
             'icon' => 'settings',
             'items' => [
+                'sftp_users' => [
+                    'label' => __('SFTP Users'),
+                    'url' => $router->fromHere('stations:sftp_users:index'),
+                    'visible' => App\Service\SftpGo::isSupported(),
+                    'permission' => Acl::STATION_MEDIA,
+                ],
                 'automation' => [
                     'label' => __('Automated Assignment'),
                     'url' => $router->fromHere('stations:automation:index'),
                     'visible' => $backend::supportsMedia(),
                     'permission' => Acl::STATION_AUTOMATION,
+                ],
+                'ls_config' => [
+                    'label' => __('Edit Liquidsoap Configuration'),
+                    'url' => $router->fromHere('stations:util:ls_config'),
+                    'visible' => $settings->enableAdvancedFeatures() && $backend instanceof App\Radio\Backend\Liquidsoap,
+                    'permission' => Acl::STATION_BROADCASTING,
                 ],
                 'logs' => [
                     'label' => __('Log Viewer'),
@@ -153,9 +177,10 @@ return function(\App\Event\BuildStationMenu $e) {
                     'label' => __('Restart Broadcasting'),
                     'url' => $router->fromHere('api:stations:restart'),
                     'class' => 'api-call',
+                    'confirm' => __('Restart broadcasting? This will disconnect any current listeners.'),
                     'permission' => Acl::STATION_BROADCASTING,
                 ],
-            ]
+            ],
         ],
     ]);
 };

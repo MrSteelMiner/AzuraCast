@@ -5,9 +5,8 @@ use App;
 use App\Entity;
 use App\Http\Response;
 use App\Http\ServerRequest;
-use Azura\Doctrine\Paginator;
-use Azura\Http\RouterInterface;
-use Doctrine\ORM\EntityManager;
+use Doctrine\ORM\EntityManagerInterface;
+use InvalidArgumentException;
 use OpenApi\Annotations as OA;
 use Psr\Http\Message\ResponseInterface;
 use Symfony\Component\Serializer\Serializer;
@@ -15,14 +14,17 @@ use Symfony\Component\Validator\Validator\ValidatorInterface;
 
 class QueueController extends AbstractStationApiCrudController
 {
-    protected $entityClass = Entity\SongHistory::class;
-    protected $resourceRouteName = 'api:stations:queue:record';
+    protected string $entityClass = Entity\StationQueue::class;
+    protected string $resourceRouteName = 'api:stations:queue:record';
 
-    /** @var App\ApiUtilities */
-    protected $apiUtils;
+    protected App\ApiUtilities $apiUtils;
 
-    public function __construct(EntityManager $em, Serializer $serializer, ValidatorInterface $validator, App\ApiUtilities $apiUtils)
-    {
+    public function __construct(
+        EntityManagerInterface $em,
+        Serializer $serializer,
+        ValidatorInterface $validator,
+        App\ApiUtilities $apiUtils
+    ) {
         parent::__construct($em, $serializer, $validator);
 
         $this->apiUtils = $apiUtils;
@@ -45,36 +47,20 @@ class QueueController extends AbstractStationApiCrudController
      *
      * @inheritdoc
      */
-    public function listAction(ServerRequest $request, Response $response, $station_id): ResponseInterface
+    public function listAction(ServerRequest $request, Response $response): ResponseInterface
     {
-        $query = $this->em->createQuery(/** @lang DQL */'SELECT sh, sp, s, sm
-            FROM App\Entity\SongHistory sh 
-            LEFT JOIN sh.song s 
-            LEFT JOIN sh.media sm
-            LEFT JOIN sh.playlist sp 
-            WHERE sh.station_id = :station_id
-            AND sh.sent_to_autodj = 0
-            AND sh.timestamp_start = 0
-            AND sh.timestamp_end = 0
-            ORDER BY sh.timestamp_cued DESC')
-            ->setParameter('station_id', $station_id);
+        $station = $request->getStation();
 
-        $paginator = new Paginator($query);
-        $paginator->setFromRequest($request);
+        $query = $this->em->createQuery(/** @lang DQL */ 'SELECT sq, sp, s, sm
+            FROM App\Entity\StationQueue sq 
+            LEFT JOIN sq.song s 
+            LEFT JOIN sq.media sm
+            LEFT JOIN sq.playlist sp 
+            WHERE sq.station = :station
+            ORDER BY sq.timestamp_cued ASC')
+            ->setParameter('station', $station);
 
-        $is_bootgrid = $paginator->isFromBootgrid();
-        $router = $request->getRouter();
-
-        $paginator->setPostprocessor(function($row) use ($is_bootgrid, $router) {
-            $return = $this->_viewRecord($row, $router);
-            if ($is_bootgrid) {
-                return App\Utilities::flattenArray($return, '_');
-            }
-
-            return $return;
-        });
-
-        return $paginator->write($response);
+        return $this->listPaginatedFromQuery($request, $response, $query);
     }
 
     /**
@@ -113,24 +99,31 @@ class QueueController extends AbstractStationApiCrudController
      *   @OA\Response(response=403, description="Access denied"),
      *   security={{"api_key": {}}}
      * )
+     *
+     * @param mixed $record
+     * @param ServerRequest $request
+     *
+     * @return Entity\Api\QueuedSong
+     * @throws App\Exception
      */
 
-    /**
-     * @inheritdoc
-     */
-    protected function _viewRecord($record, RouterInterface $router)
+    protected function viewRecord($record, ServerRequest $request)
     {
         if (!($record instanceof $this->entityClass)) {
-            throw new \InvalidArgumentException(sprintf('Record must be an instance of %s.', $this->entityClass));
+            throw new InvalidArgumentException(sprintf('Record must be an instance of %s.', $this->entityClass));
         }
 
-        /** @var Entity\SongHistory $record */
+        $router = $request->getRouter();
+
+        /** @var Entity\StationQueue $record */
         /** @var Entity\Api\QueuedSong $row */
-        $row = $record->api(new Entity\Api\QueuedSong, $this->apiUtils);
+        $row = $record->api($this->apiUtils);
         $row->resolveUrls($router->getBaseUrl());
 
+        $isInternal = ('true' === $request->getParam('internal', 'false'));
+
         $row->links = [
-            'self' => (string)$router->fromHere($this->resourceRouteName, ['id' => $record->getId()], [], true),
+            'self' => $router->fromHere($this->resourceRouteName, ['id' => $record->getId()], [], !$isInternal),
         ];
 
         return $row;

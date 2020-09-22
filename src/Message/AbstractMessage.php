@@ -1,15 +1,6 @@
 <?php
 namespace App\Message;
 
-use Bernard\Message;
-
-abstract class AbstractMessage implements Message
+abstract class AbstractMessage
 {
-    /**
-     * @return string
-     */
-    public function getName(): string
-    {
-        return get_called_class();
-    }
 }

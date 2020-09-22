@@ -2,13 +2,17 @@
 namespace App\Controller\Api\Stations;
 
 use App\Entity;
+use App\Exception\StationUnsupportedException;
+use App\Http\Response;
 use App\Http\ServerRequest;
+use Carbon\CarbonInterface;
 use OpenApi\Annotations as OA;
+use Psr\Http\Message\ResponseInterface;
 
-class StreamersController extends AbstractStationApiCrudController
+class StreamersController extends AbstractScheduledEntityController
 {
-    protected $entityClass = Entity\StationStreamer::class;
-    protected $resourceRouteName = 'api:stations:streamer';
+    protected string $entityClass = Entity\StationStreamer::class;
+    protected string $resourceRouteName = 'api:stations:streamer';
 
     /**
      * @OA\Get(path="/station/{station_id}/streamers",
@@ -95,15 +99,83 @@ class StreamersController extends AbstractStationApiCrudController
      */
 
     /**
+     * Controller used to respond to AJAX requests from the streamer "Schedule View".
+     *
+     * @param ServerRequest $request
+     * @param Response $response
+     *
+     * @return ResponseInterface
+     */
+    public function scheduleAction(ServerRequest $request, Response $response): ResponseInterface
+    {
+        $station = $request->getStation();
+
+        $scheduleItems = $this->em->createQuery(/** @lang DQL */ 'SELECT
+            ssc, sst
+            FROM App\Entity\StationSchedule ssc
+            LEFT JOIN ssc.streamer sst
+            WHERE sst.station = :station AND sst.is_active = 1
+        ')->setParameter('station', $station)
+            ->execute();
+
+        return $this->renderEvents(
+            $request,
+            $response,
+            $scheduleItems,
+            function (Entity\StationSchedule $scheduleItem, CarbonInterface $start, CarbonInterface $end) use (
+                $request,
+                $station
+            ) {
+                /** @var Entity\StationStreamer $streamer */
+                $streamer = $scheduleItem->getStreamer();
+
+                return [
+                    'id' => $streamer->getId(),
+                    'title' => $streamer->getDisplayName(),
+                    'start' => $start->toIso8601String(),
+                    'end' => $end->toIso8601String(),
+                    'edit_url' => (string)$request->getRouter()->named(
+                        'api:stations:streamer',
+                        ['station_id' => $station->getId(), 'id' => $streamer->getId()]
+                    ),
+                ];
+            }
+        );
+    }
+
+    /**
+     * @param mixed $record
+     * @param ServerRequest $request
+     *
+     * @return array|mixed
+     */
+    protected function viewRecord($record, ServerRequest $request)
+    {
+        $return = parent::viewRecord($record, $request);
+
+        $isInternal = ('true' === $request->getParam('internal', 'false'));
+        $router = $request->getRouter();
+
+        $return['links']['broadcasts'] = $router->fromHere(
+            'api:stations:streamer:broadcasts',
+            ['id' => $record->getId()],
+            [],
+            !$isInternal
+        );
+
+        return $return;
+    }
+
+    /**
      * @inheritDoc
      */
-    protected function _getStation(ServerRequest $request): Entity\Station
+    protected function getStation(ServerRequest $request): Entity\Station
     {
-        $station = parent::_getStation($request);
+        $station = parent::getStation($request);
 
         $backend = $request->getStationBackend();
         if (!$backend::supportsStreamers()) {
-            throw new \App\Exception\StationUnsupported;
+            throw new StationUnsupportedException;
         }
 
         return $station;

@@ -2,11 +2,12 @@
 /**
  * Gravatar - Globally Recognized Avatars Connector
  */
+
 namespace App\Service;
 
 class Gravatar
 {
-    public static function get($email, $size = 50, $default = 'mm')
+    public static function get($email, $size = 50, $default = 'mm'): string
     {
         $grav_prefix = 'https://www.gravatar.com';
 

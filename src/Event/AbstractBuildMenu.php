@@ -3,50 +3,43 @@ namespace App\Event;
 
 use App\Acl;
 use App\Entity\User;
-use App\Http\Router;
-use Azura\Http\RouterInterface;
+use App\Http\RouterInterface;
+use App\Settings;
 use Symfony\Contracts\EventDispatcher\Event;
 
 abstract class AbstractBuildMenu extends Event
 {
-    /** @var Acl */
-    protected $acl;
+    protected Acl $acl;
 
-    /** @var User */
-    protected $user;
+    protected User $user;
 
-    /** @var RouterInterface */
-    protected $router;
+    protected RouterInterface $router;
 
-    /** @var array */
-    protected $menu = [];
+    protected Settings $settings;
 
-    /**
-     * @param Acl $acl
-     * @param User $user
-     * @param RouterInterface $router
-     */
+    protected array $menu = [];
+
     public function __construct(Acl $acl, User $user, RouterInterface $router)
     {
         $this->acl = $acl;
         $this->user = $user;
         $this->router = $router;
+        $this->settings = Settings::getInstance();
     }
 
-    /**
-     * @return Acl
-     */
     public function getAcl(): Acl
     {
         return $this->acl;
     }
 
-    /**
-     * @return Router
-     */
-    public function getRouter(): Router
+    public function getRouter(): RouterInterface
     {
         return $this->router;
+    }
+
+    public function getSettings(): Settings
+    {
+        return $this->settings;
     }
 
     /**
@@ -77,7 +70,7 @@ abstract class AbstractBuildMenu extends Event
     {
         $menu = $this->menu;
 
-        foreach($menu as &$item) {
+        foreach ($menu as &$item) {
             if (isset($item['items'])) {
                 $item['items'] = array_filter($item['items'], [$this, 'filterMenuItem']);
             }
@@ -88,6 +81,7 @@ abstract class AbstractBuildMenu extends Event
 
     /**
      * @param array $item
+     *
      * @return bool
      */
     protected function filterMenuItem(array $item): bool
@@ -96,12 +90,12 @@ abstract class AbstractBuildMenu extends Event
             return false;
         }
 
-        if (isset($item['visible'])) {
-            return (bool)$item['visible'];
+        if (isset($item['visible']) && !$item['visible']) {
+            return false;
         }
 
-        if (isset($item['permission'])) {
-            return $this->checkPermission($item['permission']);
+        if (isset($item['permission']) && !$this->checkPermission($item['permission'])) {
+            return false;
         }
 
         return true;
@@ -109,6 +103,7 @@ abstract class AbstractBuildMenu extends Event
 
     /**
      * @param string $permission_name
+     *
      * @return bool
      */
     public function checkPermission(string $permission_name): bool

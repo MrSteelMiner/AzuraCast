@@ -15,7 +15,7 @@ class NowPlaying implements ResolvableUrlInterface
      * @OA\Property
      * @var Station
      */
-    public $station;
+    public Station $station;
 
     /**
      * Listener details
@@ -23,7 +23,7 @@ class NowPlaying implements ResolvableUrlInterface
      * @OA\Property
      * @var NowPlayingListeners
      */
-    public $listeners;
+    public NowPlayingListeners $listeners;
 
     /**
      * Live broadcast details
@@ -31,37 +31,37 @@ class NowPlaying implements ResolvableUrlInterface
      * @OA\Property
      * @var NowPlayingLive
      */
-    public $live;
+    public NowPlayingLive $live;
 
     /**
      * Current Song
      *
      * @OA\Property
-     * @var NowPlayingCurrentSong
+     * @var NowPlayingCurrentSong|null
      */
-    public $now_playing;
+    public ?NowPlayingCurrentSong $now_playing = null;
 
     /**
      * Next Playing Song
      *
      * @OA\Property
-     * @var SongHistory
+     * @var StationQueue|null
      */
-    public $playing_next;
+    public ?StationQueue $playing_next = null;
 
     /**
      * @OA\Property
      * @var SongHistory[]
      */
-    public $song_history;
+    public array $song_history = [];
 
     /**
      * Debugging information about where the now playing data comes from.
      *
      * @OA\Property(enum={"hit", "database", "station"})
-     * @var string
+     * @var string|null
      */
-    public $cache;
+    public ?string $cache = null;
 
     /**
      * Update any variable items in the feed.
@@ -78,7 +78,7 @@ class NowPlaying implements ResolvableUrlInterface
      */
     public function toArray(): array
     {
-        return json_decode(json_encode($this), true);
+        return json_decode(json_encode($this, JSON_THROW_ON_ERROR), true, 512, JSON_THROW_ON_ERROR);
     }
 
     /**
@@ -100,7 +100,7 @@ class NowPlaying implements ResolvableUrlInterface
             $this->playing_next->resolveUrls($base);
         }
 
-        foreach($this->song_history as $history_obj) {
+        foreach ($this->song_history as $history_obj) {
             if ($history_obj instanceof ResolvableUrlInterface) {
                 $history_obj->resolveUrls($base);
             }

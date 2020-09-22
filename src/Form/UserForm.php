@@ -1,32 +1,24 @@
 <?php
 namespace App\Form;
 
+use App\Config;
 use App\Entity;
 use App\Http\ServerRequest;
-use Azura\Config;
-use Doctrine\ORM\EntityManager;
+use Doctrine\ORM\EntityManagerInterface;
 use Symfony\Component\Serializer\Serializer;
 use Symfony\Component\Validator\Validator\ValidatorInterface;
 
 class UserForm extends EntityForm
 {
-    /**
-     * @param EntityManager $em
-     * @param Serializer $serializer
-     * @param ValidatorInterface $validator
-     * @param Config $config
-     */
     public function __construct(
-        EntityManager $em,
+        EntityManagerInterface $em,
         Serializer $serializer,
         ValidatorInterface $validator,
-        Config $config
+        Config $config,
+        Entity\Repository\RoleRepository $roleRepo
     ) {
-        /** @var \Azura\Doctrine\Repository $role_repo */
-        $role_repo = $em->getRepository(Entity\Role::class);
-
         $form_config = $config->get('forms/user', [
-            'roles' => $role_repo->fetchSelect()
+            'roles' => $roleRepo->fetchSelect(),
         ]);
 
         parent::__construct($em, $serializer, $validator, $form_config);
@@ -34,9 +26,6 @@ class UserForm extends EntityForm
         $this->entityClass = Entity\User::class;
     }
 
-    /**
-     * @inheritdoc
-     */
     public function process(ServerRequest $request, $record = null)
     {
         // Check for administrative permissions and hide admin fields otherwise.

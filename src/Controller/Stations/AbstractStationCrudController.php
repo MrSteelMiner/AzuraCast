@@ -2,26 +2,27 @@
 namespace App\Controller\Stations;
 
 use App\Entity\Station;
+use App\Exception;
+use App\Exception\CsrfValidationException;
+use App\Exception\NotFoundException;
 use App\Form\EntityForm;
 use App\Http\ServerRequest;
-use Doctrine\ORM\EntityManager;
+use Doctrine\ORM\EntityManagerInterface;
+use Doctrine\ORM\OptimisticLockException;
+use Doctrine\ORM\ORMException;
+use Doctrine\Persistence\ObjectRepository;
 
 abstract class AbstractStationCrudController
 {
-    /** @var EntityForm */
-    protected $form;
+    protected EntityForm $form;
 
-    /** @var EntityManager */
-    protected $em;
+    protected EntityManagerInterface $em;
 
-    /** @var string */
-    protected $entity_class;
+    protected string $entity_class;
 
-    /** @var \Azura\Doctrine\Repository */
-    protected $record_repo;
+    protected ObjectRepository $record_repo;
 
-    /** @var string */
-    protected $csrf_namespace;
+    protected string $csrf_namespace;
 
     public function __construct(EntityForm $form)
     {
@@ -35,6 +36,7 @@ abstract class AbstractStationCrudController
     /**
      * @param ServerRequest $request
      * @param string|int|null $id
+     *
      * @return object|bool|null
      */
     protected function _doEdit(ServerRequest $request, $id = null)
@@ -43,34 +45,13 @@ abstract class AbstractStationCrudController
         $this->form->setStation($station);
 
         $record = $this->_getRecord($station, $id);
-        $result = $this->form->process($request, $record);
-
-        if (false !== $result) {
-            $this->em->refresh($station);
-        }
-
-        return $result;
-    }
-
-    /**
-     * @param ServerRequest $request
-     * @param string|int $id
-     */
-    protected function _doDelete(ServerRequest $request, $id, $csrf_token): void
-    {
-        $request->getSession()->getCsrf()->verify($csrf_token, $this->csrf_namespace);
-
-        $record = $this->_getRecord($request->getStation(), $id);
-
-        if ($record instanceof $this->entity_class) {
-            $this->em->remove($record);
-            $this->em->flush();
-        }
+        return $this->form->process($request, $record);
     }
 
     /**
      * @param Station $station
      * @param string|int|null $id
+     *
      * @return object|null
      */
     protected function _getRecord(Station $station, $id = null): ?object
@@ -79,12 +60,35 @@ abstract class AbstractStationCrudController
             return null;
         }
 
-        $record = $this->record_repo->findOneBy(['id' => $id, 'station_id' => $station->getId()]);
+        $record = $this->record_repo->findOneBy(['id' => $id, 'station' => $station]);
 
         if (!$record instanceof $this->entity_class) {
-            throw new \App\Exception\NotFound(__('Record not found.'));
+            throw new NotFoundException(__('Record not found.'));
         }
 
         return $record;
+    }
+
+    /**
+     * @param ServerRequest $request
+     * @param string|int $id
+     * @param string $csrf
+     *
+     * @throws NotFoundException
+     * @throws Exception
+     * @throws CsrfValidationException
+     * @throws ORMException
+     * @throws OptimisticLockException
+     */
+    protected function _doDelete(ServerRequest $request, $id, $csrf): void
+    {
+        $request->getCsrf()->verify($csrf, $this->csrf_namespace);
+
+        $record = $this->_getRecord($request->getStation(), $id);
+
+        if ($record instanceof $this->entity_class) {
+            $this->em->remove($record);
+            $this->em->flush();
+        }
     }
 }

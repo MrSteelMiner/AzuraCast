@@ -2,9 +2,12 @@
 namespace App\Radio;
 
 use App\Entity\Station;
-use Doctrine\ORM\EntityManager;
+use App\Exception;
+use App\Settings;
+use Doctrine\ORM\EntityManagerInterface;
 use fXmlRpc\Exception\FaultException;
 use Monolog\Logger;
+use RuntimeException;
 use Supervisor\Supervisor;
 
 class Configuration
@@ -12,32 +15,20 @@ class Configuration
     public const DEFAULT_PORT_MIN = 8000;
     public const DEFAULT_PORT_MAX = 8499;
 
-    /** @var EntityManager */
-    protected $em;
+    protected EntityManagerInterface $em;
 
-    /** @var Adapters */
-    protected $adapters;
+    protected Adapters $adapters;
 
-    /** @var Supervisor */
-    protected $supervisor;
+    protected Supervisor $supervisor;
 
-    /** @var Logger */
-    protected $logger;
+    protected Logger $logger;
 
-    /**
-     * Configuration constructor.
-     *
-     * @param EntityManager $em
-     * @param Adapters $adapters
-     * @param Supervisor $supervisor
-     * @param Logger $logger
-     */
     public function __construct(
-        EntityManager $em,
+        EntityManagerInterface $em,
         Adapters $adapters,
         Supervisor $supervisor,
-        Logger $logger)
-    {
+        Logger $logger
+    ) {
         $this->em = $em;
         $this->adapters = $adapters;
         $this->supervisor = $supervisor;
@@ -53,7 +44,7 @@ class Configuration
      */
     public function writeConfiguration(Station $station, $regen_auth_key = false, $force_restart = false): void
     {
-        if (APP_TESTING_MODE) {
+        if (Settings::getInstance()->isTesting()) {
             return;
         }
 
@@ -70,11 +61,15 @@ class Configuration
         // Ensure port configuration exists
         $this->assignRadioPorts($station, false);
 
+        // Clear station caches and generate API adapter key if none exists.
         if ($regen_auth_key || empty($station->getAdapterApiKey())) {
             $station->generateAdapterApiKey();
-            $this->em->persist($station);
-            $this->em->flush($station);
         }
+
+        $station->clearCache();
+
+        $this->em->persist($station);
+        $this->em->flush();
 
         $frontend = $this->adapters->getFrontendAdapter($station);
         $backend = $this->adapters->getBackendAdapter($station);
@@ -87,17 +82,10 @@ class Configuration
         }
 
         // Ensure all directories exist.
-        $radio_dirs = [
-            $station->getRadioBaseDir(),
-            $station->getRadioMediaDir(),
-            $station->getRadioAlbumArtDir(),
-            $station->getRadioPlaylistsDir(),
-            $station->getRadioConfigDir(),
-            $station->getRadioTempDir(),
-        ];
+        $radio_dirs = $station->getAllStationDirectories();
         foreach ($radio_dirs as $radio_dir) {
             if (!file_exists($radio_dir) && !mkdir($radio_dir, 0777) && !is_dir($radio_dir)) {
-                throw new \RuntimeException(sprintf('Directory "%s" was not created', $radio_dir));
+                throw new RuntimeException(sprintf('Directory "%s" was not created', $radio_dir));
             }
         }
 
@@ -110,7 +98,7 @@ class Configuration
         [$backend_group, $backend_program] = explode(':', $backend_name);
 
         $frontend_name = $frontend->getProgramName($station);
-        [,$frontend_program] = explode(':', $frontend_name);
+        [, $frontend_program] = explode(':', $frontend_name);
 
         // Write group section of config
         $programs = [];
@@ -142,68 +130,15 @@ class Configuration
         $this->_reloadSupervisorForStation($station, $force_restart);
     }
 
-    protected function _writeConfigurationSection(
-        Station $station,
-        AbstractAdapter $adapter,
-        $priority): string
+    /**
+     * @param Station $station
+     *
+     * @return string
+     */
+    protected function getSupervisorConfigFile(Station $station): string
     {
         $config_path = $station->getRadioConfigDir();
-
-        [,$program_name] = explode(':', $adapter->getProgramName($station));
-
-        $config_lines = [
-            'user'              => 'azuracast',
-            'priority'          => $priority,
-            'command'           => $adapter->getCommand($station),
-            'directory'         => $config_path,
-            'environment'       => 'TZ="'.$station->getTimezone().'"',
-            'stdout_logfile'    => $adapter->getLogPath($station),
-            'stdout_logfile_maxbytes' => '5MB',
-            'stdout_logfile_backups' => '10',
-            'redirect_stderr'   => 'true',
-            'stopasgroup' => true,
-            'killasgroup' => true,
-        ];
-
-        $supervisor_config[] = '[program:' . $program_name . ']';
-        foreach($config_lines as $config_key => $config_value) {
-            $supervisor_config[] = $config_key . '=' . $config_value;
-        }
-        $supervisor_config[] = '';
-
-        return implode("\n", $supervisor_config);
-    }
-
-    /**
-     * Remove configuration (i.e. prior to station removal) and trigger a Supervisor refresh.
-     *
-     * @param Station $station
-     */
-    public function removeConfiguration(Station $station): void
-    {
-        if (APP_TESTING_MODE) {
-            return;
-        }
-
-        $supervisor_config_path = $this->getSupervisorConfigFile($station);
-        @unlink($supervisor_config_path);
-
-        $station_group = 'station_'.$station->getId();
-        $affected_groups = $this->_reloadSupervisor();
-
-        if (!in_array($station_group, $affected_groups, true)) {
-            // Try forcing the group to stop, but don't hard-fail if it doesn't.
-            try {
-                $this->supervisor->stopProcessGroup($station_group, true);
-                $this->supervisor->removeProcessGroup($station_group);
-            } catch(FaultException $e) {
-                $this->logger->log(Logger::ERROR, $e->getMessage(), [
-                    'file' => $e->getFile(),
-                    'line' => $e->getLine(),
-                    'code' => $e->getCode(),
-                ]);
-            }
-        }
+        return $config_path . '/supervisord.conf';
     }
 
     /**
@@ -215,7 +150,7 @@ class Configuration
      */
     protected function _reloadSupervisorForStation(Station $station, $force_restart = false): void
     {
-        $station_group = 'station_'.$station->getId();
+        $station_group = 'station_' . $station->getId();
         $affected_groups = $this->_reloadSupervisor();
 
         $was_restarted = in_array($station_group, $affected_groups, true);
@@ -231,7 +166,7 @@ class Configuration
             $station->setNeedsRestart(false);
 
             $this->em->persist($station);
-            $this->em->flush($station);
+            $this->em->flush();
         }
     }
 
@@ -282,16 +217,6 @@ class Configuration
     }
 
     /**
-     * @param Station $station
-     * @return string
-     */
-    protected function getSupervisorConfigFile(Station $station): string
-    {
-        $config_path = $station->getRadioConfigDir();
-        return $config_path . '/supervisord.conf';
-    }
-
-    /**
      * Assign the first available port range to this station, or ensure it already is configured properly.
      *
      * @param Station $station
@@ -300,29 +225,27 @@ class Configuration
     public function assignRadioPorts(Station $station, $force = false): void
     {
         if ($station->getFrontendType() !== Adapters::FRONTEND_REMOTE || $station->getBackendType() !== Adapters::BACKEND_NONE) {
-            $frontend_config = (array)$station->getFrontendConfig();
-            $backend_config = (array)$station->getBackendConfig();
+            $frontend_config = $station->getFrontendConfig();
+            $backend_config = $station->getBackendConfig();
 
-            if ($force || empty($frontend_config['port'])) {
+            $base_port = $frontend_config->getPort();
+            if ($force || null === $base_port) {
                 $base_port = $this->getFirstAvailableRadioPort($station);
 
-                $station->setFrontendConfig([
-                    'port' => $base_port,
-                ]);
-            } else {
-                $base_port = (int)$frontend_config['port'];
+                $frontend_config->setPort($base_port);
+                $station->setFrontendConfig($frontend_config);
             }
 
-            if ($force || empty($backend_config['dj_port'])) {
-                $station->setBackendConfig([
-                    'dj_port' => $base_port + 5,
-                ]);
+            $djPort = $backend_config->getDjPort();
+            if ($force || null === $djPort) {
+                $backend_config->setDjPort($base_port + 5);
+                $station->setBackendConfig($backend_config);
             }
 
-            if ($force || empty($backend_config['telnet_port'])) {
-                $station->setBackendConfig([
-                    'telnet_port' => $base_port + 4,
-                ]);
+            $telnetPort = $backend_config->getTelnetPort();
+            if ($force || null === $telnetPort) {
+                $backend_config->setTelnetPort($base_port + 4);
+                $station->setBackendConfig($backend_config);
             }
 
             $this->em->persist($station);
@@ -334,6 +257,7 @@ class Configuration
      * Determine the first available 10-port block that has no stations occupying it.
      *
      * @param Station|null $station A station to exclude, or null to include all stations.
+     *
      * @return int The first available radio port to use.
      */
     public function getFirstAvailableRadioPort(Station $station = null): int
@@ -353,13 +277,13 @@ class Configuration
             $port_max = self::DEFAULT_PORT_MAX;
         }
 
-        for($port = $port_min; $port <= $port_max; $port += 10) {
+        for ($port = $port_min; $port <= $port_max; $port += 10) {
             if (in_array($port, $protected_ports, true)) {
                 continue;
             }
 
             $range_in_use = false;
-            for($i = $port; $i < $port+10; $i++) {
+            for ($i = $port; $i < $port + 10; $i++) {
                 if (isset($used_ports[$i])) {
                     $range_in_use = true;
                     break;
@@ -371,13 +295,14 @@ class Configuration
             }
         }
 
-        throw new \Azura\Exception('This installation has no available ports for new radio stations.');
+        throw new Exception('This installation has no available ports for new radio stations.');
     }
 
     /**
      * Get an array of all used ports across the system, except the ones used by the station specified (if specified).
      *
      * @param Station|null $except_station
+     *
      * @return array
      */
     public function getUsedPorts(Station $except_station = null): array
@@ -388,12 +313,12 @@ class Configuration
             $used_ports = [];
 
             // Get all station used ports.
-            $station_configs = $this->em->createQuery(/** @lang DQL */'SELECT 
+            $station_configs = $this->em->createQuery(/** @lang DQL */ 'SELECT 
                 s.id, s.name, s.frontend_type, s.frontend_config, s.backend_type, s.backend_config 
                 FROM App\Entity\Station s')
                 ->getArrayResult();
 
-            foreach($station_configs as $row) {
+            foreach ($station_configs as $row) {
                 $station_reference = ['id' => $row['id'], 'name' => $row['name']];
 
                 if ($row['frontend_type'] !== Adapters::FRONTEND_REMOTE) {
@@ -412,7 +337,7 @@ class Configuration
                     if (!empty($backend_config['dj_port'])) {
                         $port = (int)$backend_config['dj_port'];
                         $used_ports[$port] = $station_reference;
-                        $used_ports[$port+1] = $station_reference;
+                        $used_ports[$port + 1] = $station_reference;
                     }
                     if (!empty($backend_config['telnet_port'])) {
                         $port = (int)$backend_config['telnet_port'];
@@ -423,11 +348,72 @@ class Configuration
         }
 
         if (null !== $except_station && null !== $except_station->getId()) {
-            return array_filter($used_ports, function($station_reference) use ($except_station) {
+            return array_filter($used_ports, function ($station_reference) use ($except_station) {
                 return ($station_reference['id'] !== $except_station->getId());
             });
         }
 
         return $used_ports;
+    }
+
+    protected function _writeConfigurationSection(
+        Station $station,
+        AbstractAdapter $adapter,
+        $priority
+    ): string {
+        $config_path = $station->getRadioConfigDir();
+
+        [, $program_name] = explode(':', $adapter->getProgramName($station));
+
+        $config_lines = [
+            'user' => 'azuracast',
+            'priority' => $priority,
+            'command' => $adapter->getCommand($station),
+            'directory' => $config_path,
+            'environment' => 'TZ="' . $station->getTimezone() . '"',
+            'stdout_logfile' => $adapter->getLogPath($station),
+            'stdout_logfile_maxbytes' => '5MB',
+            'stdout_logfile_backups' => '10',
+            'redirect_stderr' => 'true',
+        ];
+
+        $supervisor_config[] = '[program:' . $program_name . ']';
+        foreach ($config_lines as $config_key => $config_value) {
+            $supervisor_config[] = $config_key . '=' . $config_value;
+        }
+        $supervisor_config[] = '';
+
+        return implode("\n", $supervisor_config);
+    }
+
+    /**
+     * Remove configuration (i.e. prior to station removal) and trigger a Supervisor refresh.
+     *
+     * @param Station $station
+     */
+    public function removeConfiguration(Station $station): void
+    {
+        if (Settings::getInstance()->isTesting()) {
+            return;
+        }
+
+        $station_group = 'station_' . $station->getId();
+
+        // Try forcing the group to stop, but don't hard-fail if it doesn't.
+        try {
+            $this->supervisor->stopProcessGroup($station_group, true);
+            $this->supervisor->removeProcessGroup($station_group);
+        } catch (FaultException $e) {
+            $this->logger->log(Logger::ERROR, $e->getMessage(), [
+                'file' => $e->getFile(),
+                'line' => $e->getLine(),
+                'code' => $e->getCode(),
+            ]);
+        }
+
+        $supervisor_config_path = $this->getSupervisorConfigFile($station);
+        @unlink($supervisor_config_path);
+
+        $this->_reloadSupervisor();
     }
 }

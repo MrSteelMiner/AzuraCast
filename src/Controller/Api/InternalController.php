@@ -3,6 +3,7 @@ namespace App\Controller\Api;
 
 use App\Acl;
 use App\Entity;
+use App\Exception\PermissionDeniedException;
 use App\Http\Response;
 use App\Http\ServerRequest;
 use App\Radio\AutoDJ;
@@ -13,24 +14,14 @@ use Psr\Http\Message\ResponseInterface;
 
 class InternalController
 {
-    /** @var Acl */
-    protected $acl;
+    protected Acl $acl;
 
-    /** @var NowPlaying */
-    protected $sync_nowplaying;
+    protected NowPlaying $sync_nowplaying;
 
-    /** @var AutoDJ */
-    protected $autodj;
+    protected AutoDJ $autodj;
 
-    /** @var Logger */
-    protected $logger;
+    protected Logger $logger;
 
-    /**
-     * @param Acl $acl
-     * @param NowPlaying $sync_nowplaying
-     * @param AutoDJ $autodj
-     * @param Logger $logger
-     */
     public function __construct(
         Acl $acl,
         NowPlaying $sync_nowplaying,
@@ -43,11 +34,6 @@ class InternalController
         $this->logger = $logger;
     }
 
-    /**
-     * @param ServerRequest $request
-     * @param Response $response
-     * @return ResponseInterface
-     */
     public function authAction(ServerRequest $request, Response $response): ResponseInterface
     {
         $this->_checkStationAuth($request);
@@ -64,8 +50,8 @@ class InternalController
         }
 
         $params = $request->getParams();
-        $user = $params['dj_user'] ?? '';
-        $pass = $params['dj_password'] ?? '';
+        $user = $params['dj-user'] ?? '';
+        $pass = $params['dj-password'] ?? '';
 
         $adapter = $request->getStationBackend();
         if ($adapter instanceof Liquidsoap) {
@@ -75,6 +61,29 @@ class InternalController
 
         $response->getBody()->write('false');
         return $response;
+    }
+
+    protected function _checkStationAuth(ServerRequest $request): void
+    {
+        $station = $request->getStation();
+
+        /** @var Entity\User $user */
+        $user = $request->getAttribute(ServerRequest::ATTR_USER);
+
+        if ($this->acl->userAllowed($user, Acl::GLOBAL_VIEW, $station->getId())) {
+            return;
+        }
+
+        $params = $request->getParams();
+        $auth_key = $params['api_auth'];
+        if (!$station->validateAdapterApiKey($auth_key)) {
+            $this->logger->error('Invalid API key supplied for internal API call.', [
+                'station_id' => $station->getId(),
+                'station_name' => $station->getName(),
+            ]);
+
+            throw new PermissionDeniedException;
+        }
     }
 
     public function nextsongAction(ServerRequest $request, Response $response): ResponseInterface
@@ -95,13 +104,16 @@ class InternalController
         $adapter = $request->getStationBackend();
         if ($adapter instanceof Liquidsoap) {
             $station = $request->getStation();
+            $user = $request->getParam('dj-user', '');
 
             $this->logger->info('Received "DJ connected" ping from Liquidsoap.', [
                 'station_id' => $station->getId(),
                 'station_name' => $station->getName(),
+                'dj' => $user,
             ]);
 
-            $adapter->toggleLiveStatus($station, true);
+            $response->getBody()->write($adapter->onConnect($station, $user));
+            return $response;
         }
 
         $response->getBody()->write('received');
@@ -115,13 +127,16 @@ class InternalController
         $adapter = $request->getStationBackend();
         if ($adapter instanceof Liquidsoap) {
             $station = $request->getStation();
+            $user = $request->getParam('dj-user', '');
 
             $this->logger->info('Received "DJ disconnected" ping from Liquidsoap.', [
                 'station_id' => $station->getId(),
                 'station_name' => $station->getName(),
+                'dj' => $user,
             ]);
 
-            $adapter->toggleLiveStatus($station, false);
+            $response->getBody()->write($adapter->onDisconnect($station, $user));
+            return $response;
         }
 
         $response->getBody()->write('received');
@@ -137,38 +152,12 @@ class InternalController
         $body = $request->getParams();
 
         $this->sync_nowplaying->queueStation($station, [
-            'song_id'   => $body['song'] ?? null,
-            'media_id'  => $body['media'] ?? null,
-            'playlist_id'  => $body['playlist'] ?? null,
+            'song_id' => $body['song'] ?? null,
+            'media_id' => $body['media'] ?? null,
+            'playlist_id' => $body['playlist'] ?? null,
         ]);
 
         $response->getBody()->write('OK');
         return $response;
-    }
-
-    /**
-     * @param ServerRequest $request
-     */
-    protected function _checkStationAuth(ServerRequest $request): void
-    {
-        $station = $request->getStation();
-
-        /** @var Entity\User $user */
-        $user = $request->getAttribute(ServerRequest::ATTR_USER);
-
-        if ($this->acl->userAllowed($user, Acl::GLOBAL_VIEW, $station->getId())) {
-            return;
-        }
-
-        $params = $request->getParams();
-        $auth_key = $params['api_auth'];
-        if (!$station->validateAdapterApiKey($auth_key)) {
-            $this->logger->error('Invalid API key supplied for internal API call.', [
-                'station_id' => $station->getId(),
-                'station_name' => $station->getName(),
-            ]);
-
-            throw new \App\Exception\PermissionDenied;
-        }
     }
 }

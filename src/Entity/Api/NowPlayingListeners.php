@@ -9,38 +9,35 @@ use OpenApi\Annotations as OA;
 class NowPlayingListeners
 {
     /**
-     * @param array $listeners
-     */
-    public function __construct($listeners = [])
-    {
-        if (isset($listeners['current'])) {
-            $this->current = (int)$listeners['current'];
-        } else {
-            $this->current = (int)($listeners['unique'] ?? $listeners['total']);
-        }
-
-        $this->unique = (int)($listeners['unique'] ?? $listeners['current']);
-        $this->total = (int)($listeners['total'] ?? $listeners['current']);
-    }
-
-    /**
      * Current listeners, either unique (if supplied) or total (non-unique)
      * @OA\Property(example=15)
      * @var int
      */
-    public $current;
+    public int $current = 0;
 
     /**
      * Total unique current listeners
      * @OA\Property(example=15)
      * @var int
      */
-    public $unique;
+    public int $unique = 0;
 
     /**
      * Total non-unique current listeners
      * @OA\Property(example=20)
      * @var int
      */
-    public $total;
+    public int $total = 0;
+
+    public function __construct(?array $listeners = [])
+    {
+        if (isset($listeners['current'])) {
+            $this->current = (int)$listeners['current'];
+        } else {
+            $this->current = (int)($listeners['unique'] ?? $listeners['total'] ?? 0);
+        }
+
+        $this->unique = (int)($listeners['unique'] ?? $listeners['current'] ?? 0);
+        $this->total = (int)($listeners['total'] ?? $listeners['current'] ?? 0);
+    }
 }

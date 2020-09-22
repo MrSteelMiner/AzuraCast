@@ -4,10 +4,14 @@ about: Create a report to help us improve
 ---
 
 <!--
-PLEASE CHECK YOUR LOGS BEFORE SUBMITTING!!
+Please be kind and patient in your interactions with us. We are a small team of volunteers working solely on donations. Thank you in advance.
+-->
+
+<!--
+PLEASE CHECK YOUR LOGS BEFORE SUBMITTING!
 With 90% of bugs/errors, we will immediately ask you to check your logs.
 Log instructions are available here:
-https://github.com/AzuraCast/AzuraCast/blob/master/SUPPORT.md#troubleshooting-by-viewing-logs
+https://www.azuracast.com/help/
 -->
 
 <!--
@@ -16,6 +20,9 @@ Do not include your responses inside the "!--" comments. Add them outside these 
 
 **Using Docker installation method**
 <!-- Yes/No (Indicate "No" if you are using the Ansible (Bare-metal/Traditional) installation method. -->
+
+**AzuraCast version**
+<!-- This information can be located within the footer of your AzuraCast installation. EG:  v0.10.1, #62b282e (2020-00-00 00:00). -->
 
 **Host Operating System**
 <!-- Indicate what your host operating system is (i.e. Ubuntu 16.04, MacOS High Sierra, Windows 10). -->

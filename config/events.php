@@ -1,82 +1,119 @@
 <?php
-use App\Middleware;
-use App\Console\Command;
 
-return function (\Azura\EventDispatcher $dispatcher)
-{
-    // Build default routes and middleware
-    $dispatcher->addListener(Azura\Event\BuildRoutes::class, function(Azura\Event\BuildRoutes $event) {
+use App\Console\Command;
+use App\Event;
+use App\Middleware;
+use App\Settings;
+
+return function (App\EventDispatcher $dispatcher) {
+    $dispatcher->addListener(Event\BuildConsoleCommands::class, function (Event\BuildConsoleCommands $event) {
+        $console = $event->getConsole();
+        $di = $console->getContainer();
+
+        /** @var Settings $settings */
+        $settings = $di->get(Settings::class);
+
+        if ($settings->enableRedis()) {
+            $console->command('cache:clear', Command\ClearCacheCommand::class)
+                ->setDescription('Clear all application caches.');
+        }
+
+        if ($settings->enableDatabase()) {
+            // Doctrine ORM/DBAL
+            Doctrine\ORM\Tools\Console\ConsoleRunner::addCommands($console);
+
+            // Add Doctrine Migrations
+            /** @var Doctrine\ORM\EntityManagerInterface $em */
+            $em = $di->get(Doctrine\ORM\EntityManagerInterface::class);
+
+            $helper_set = $console->getHelperSet();
+            $doctrine_helpers = Doctrine\ORM\Tools\Console\ConsoleRunner::createHelperSet($em);
+            $helper_set->set($doctrine_helpers->get('db'), 'db');
+            $helper_set->set($doctrine_helpers->get('em'), 'em');
+
+            $migrateConfig = new Doctrine\Migrations\Configuration\Migration\ConfigurationArray([
+                'migrations_paths' => [
+                    'App\Entity\Migration' => $settings[Settings::BASE_DIR] . '/src/Entity/Migration',
+                ],
+                'table_storage' => [
+                    'table_name' => 'app_migrations',
+                    'version_column_length' => 191,
+                ],
+            ]);
+
+            $migrateFactory = Doctrine\Migrations\DependencyFactory::fromEntityManager(
+                $migrateConfig,
+                new Doctrine\Migrations\Configuration\EntityManager\ExistingEntityManager($em)
+            );
+            Doctrine\Migrations\Tools\Console\ConsoleRunner::addCommands($console, $migrateFactory);
+        }
+
+        call_user_func(include(__DIR__ . '/cli.php'), $console);
+    });
+
+    $dispatcher->addListener(Event\BuildRoutes::class, function (Event\BuildRoutes $event) {
         $app = $event->getApp();
 
-        if (file_exists(__DIR__.'/routes.dev.php')) {
-            $dev_routes = require __DIR__.'/routes.dev.php';
-            $dev_routes($app);
+        // Load app-specific route configuration.
+        $container = $app->getContainer();
+
+        /** @var Settings $settings */
+        $settings = $container->get(Settings::class);
+
+        call_user_func(include(__DIR__ . '/routes.php'), $app);
+
+        if (file_exists(__DIR__ . '/routes.dev.php')) {
+            call_user_func(include(__DIR__ . '/routes.dev.php'), $app);
         }
+
+        $app->add(Middleware\WrapExceptionsWithRequestData::class);
 
         $app->add(Middleware\EnforceSecurity::class);
         $app->add(Middleware\InjectAcl::class);
         $app->add(Middleware\GetCurrentUser::class);
 
-    }, 2);
+        // Request injection middlewares.
+        $app->add(Middleware\InjectRouter::class);
+        $app->add(Middleware\InjectRateLimit::class);
+
+        // Re-establish database connection if multiple requests are handled by the same stack.
+        $app->add(Middleware\ReopenEntityManagerMiddleware::class);
+
+        // System middleware for routing and body parsing.
+        $app->addBodyParsingMiddleware();
+        $app->addRoutingMiddleware();
+
+        // Redirects and updates that should happen before system middleware.
+        $app->add(new Middleware\RemoveSlashes);
+        $app->add(new Middleware\ApplyXForwardedProto);
+
+        // Use PSR-7 compatible sessions.
+        $app->add(Middleware\InjectSession::class);
+
+        // Add an error handler for most in-controller/task situations.
+        $errorMiddleware = $app->addErrorMiddleware(!$settings->isProduction(), true, true);
+        $errorMiddleware->setDefaultErrorHandler(Slim\Interfaces\ErrorHandlerInterface::class);
+    });
 
     // Build default menus
-    $dispatcher->addListener(App\Event\BuildAdminMenu::class, function(\App\Event\BuildAdminMenu $e) {
-        $callable = require(__DIR__.'/menus/admin.php');
-        $callable($e);
+    $dispatcher->addListener(App\Event\BuildAdminMenu::class, function (App\Event\BuildAdminMenu $e) {
+        call_user_func(include(__DIR__ . '/menus/admin.php'), $e);
     });
 
-    $dispatcher->addListener(App\Event\BuildStationMenu::class, function(\App\Event\BuildStationMenu $e) {
-        $callable = require(__DIR__.'/menus/station.php');
-        $callable($e);
+    $dispatcher->addListener(App\Event\BuildStationMenu::class, function (App\Event\BuildStationMenu $e) {
+        call_user_func(include(__DIR__ . '/menus/station.php'), $e);
     });
-
-    // Build CLI commands
-    $dispatcher->addListener(Azura\Event\BuildConsoleCommands::class, function(Azura\Event\BuildConsoleCommands $event) {
-        $event->getConsole()->addCommands([
-            // Liquidsoap Internal CLI Commands
-            new Command\Internal\NextSong,
-            new Command\Internal\DjAuth,
-            new Command\Internal\DjOn,
-            new Command\Internal\DjOff,
-            new Command\Internal\Feedback,
-
-            // Locales
-            new Command\LocaleGenerate,
-            new Command\LocaleImport,
-
-            // Setup
-            new Command\MigrateConfig,
-            new Command\SetupInflux,
-            new Command\SetupFixtures,
-            new Command\Setup,
-
-            // Maintenance
-            new Command\RestartRadio,
-            new Command\Sync,
-            new Command\ProcessMessageQueue,
-            new Command\ReprocessMedia,
-
-            new Command\GenerateApiDocs,
-            new Command\UptimeWait,
-
-            // User-side tools
-            new Command\ResetPassword,
-            new Command\SetAdministrator,
-            new Command\ListSettings,
-            new Command\SetSetting,
-            new Command\Backup,
-            new Command\Restore,
-        ]);
-    }, 0);
 
     // Other event subscribers from across the application.
     $dispatcher->addServiceSubscriber([
-        \App\Radio\AutoDJ::class,
-        \App\Radio\Backend\Liquidsoap::class,
-        \App\Sync\Task\NowPlaying::class,
-        \App\Webhook\Dispatcher::class,
-        \App\Controller\Api\NowplayingController::class,
-        \App\Notification\Manager::class,
+        App\Radio\AutoDJ\Queue::class,
+        App\Radio\AutoDJ\Annotations::class,
+        App\Radio\Backend\Liquidsoap\ConfigWriter::class,
+        App\Sync\Task\NowPlaying::class,
+        App\Sync\TaskLocator::class,
+        App\Webhook\Dispatcher::class,
+        App\Controller\Api\NowplayingController::class,
+        App\Notification\Manager::class,
     ]);
 
 };

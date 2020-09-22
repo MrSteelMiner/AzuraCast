@@ -2,8 +2,8 @@
 namespace App\Middleware\Module;
 
 use App\Event;
+use App\EventDispatcher;
 use App\Http\ServerRequest;
-use Azura\EventDispatcher;
 use Psr\Http\Message\ResponseInterface;
 use Psr\Http\Server\RequestHandlerInterface;
 use Slim\Interfaces\RouteInterface;
@@ -14,22 +14,13 @@ use Slim\Routing\RouteContext;
  */
 class Stations
 {
-    /** @var EventDispatcher */
-    protected $dispatcher;
+    protected EventDispatcher $dispatcher;
 
-    /**
-     * @param EventDispatcher $dispatcher
-     */
     public function __construct(EventDispatcher $dispatcher)
     {
         $this->dispatcher = $dispatcher;
     }
 
-    /**
-     * @param ServerRequest $request
-     * @param RequestHandlerInterface $handler
-     * @return ResponseInterface
-     */
     public function __invoke(ServerRequest $request, RequestHandlerInterface $handler): ResponseInterface
     {
         $view = $request->getView();
@@ -41,9 +32,9 @@ class Stations
         date_default_timezone_set($station->getTimezone());
 
         $view->addData([
-            'station'   => $station,
-            'frontend'  => $frontend,
-            'backend'   => $backend,
+            'station' => $station,
+            'frontend' => $frontend,
+            'backend' => $backend,
         ]);
 
         $user = $request->getUser();

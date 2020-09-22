@@ -1,9 +1,10 @@
 <?php
-
 namespace App\Entity;
 
-use App\Radio\Backend\Liquidsoap;
-use Azura\Normalizer\Annotation\DeepNormalize;
+use App\Annotations\AuditLog;
+use App\ApiUtilities;
+use App\Flysystem\Filesystem;
+use App\Normalizer\Annotation\DeepNormalize;
 use Doctrine\Common\Collections\ArrayCollection;
 use Doctrine\Common\Collections\Collection;
 use Doctrine\ORM\Mapping as ORM;
@@ -17,13 +18,15 @@ use Symfony\Component\Serializer\Annotation as Serializer;
  * }, uniqueConstraints={
  *   @ORM\UniqueConstraint(name="path_unique_idx", columns={"path", "station_id"})
  * })
- * @ORM\Entity(repositoryClass="App\Entity\Repository\StationMediaRepository")
+ * @ORM\Entity()
  *
  * @OA\Schema(type="object")
  */
 class StationMedia
 {
     use Traits\UniqueId, Traits\TruncateStrings;
+
+    public const UNIQUE_ID_LENGTH = 24;
 
     /**
      * @ORM\Column(name="id", type="integer")
@@ -115,13 +118,13 @@ class StationMedia
     protected $isrc;
 
     /**
-     * @ORM\Column(name="length", type="integer")
+     * @ORM\Column(name="length", type="decimal", precision=7, scale=2, nullable=true)
      *
-     * @OA\Property(example=240)
+     * @OA\Property(example=240.00)
      *
-     * @var int The song duration in seconds.
+     * @var float The song duration in seconds.
      */
-    protected $length;
+    protected $length = 0.00;
 
     /**
      * @ORM\Column(name="length_text", type="string", length=10, nullable=true)
@@ -130,7 +133,7 @@ class StationMedia
      *
      * @var string|null The formatted song duration (in mm:ss format)
      */
-    protected $length_text;
+    protected $length_text = '0:00';
 
     /**
      * @ORM\Column(name="path", type="string", length=500, nullable=true)
@@ -148,7 +151,17 @@ class StationMedia
      *
      * @var int|null The UNIX timestamp when the database was last modified.
      */
-    protected $mtime;
+    protected $mtime = 0;
+
+    /**
+     * @ORM\Column(name="amplify", type="decimal", precision=3, scale=1, nullable=true)
+     *
+     * @OA\Property(example=-14.00)
+     *
+     * @var float|null The amount of amplification (in dB) to be applied to the radio source;
+     *                 equivalent to Liquidsoap's "liq_amplify" annotation.
+     */
+    protected $amplify;
 
     /**
      * @ORM\Column(name="fade_overlap", type="decimal", precision=3, scale=1, nullable=true)
@@ -201,7 +214,16 @@ class StationMedia
     protected $cue_out;
 
     /**
-     * @ORM\OneToMany(targetEntity="StationPlaylistMedia", mappedBy="media", cascade={"persist"})
+     * @ORM\Column(name="art_updated_at", type="integer")
+     * @AuditLog\AuditIgnore()
+     *
+     * @OA\Property(example=SAMPLE_TIMESTAMP)
+     * @var int The latest time (UNIX timestamp) when album art was updated.
+     */
+    protected $art_updated_at = 0;
+
+    /**
+     * @ORM\OneToMany(targetEntity="StationPlaylistMedia", mappedBy="media")
      *
      * @DeepNormalize(true)
      * @Serializer\MaxDepth(1)
@@ -213,7 +235,7 @@ class StationMedia
     protected $playlists;
 
     /**
-     * @ORM\OneToMany(targetEntity="StationMediaCustomField", mappedBy="media", cascade={"persist"})
+     * @ORM\OneToMany(targetEntity="StationMediaCustomField", mappedBy="media")
      *
      * @var Collection
      */
@@ -223,11 +245,6 @@ class StationMedia
     {
         $this->station = $station;
 
-        $this->length = 0;
-        $this->length_text = '0:00';
-
-        $this->mtime = 0;
-
         $this->playlists = new ArrayCollection;
         $this->custom_fields = new ArrayCollection;
 
@@ -235,44 +252,308 @@ class StationMedia
         $this->generateUniqueId();
     }
 
-    /**
-     * @return int
-     */
     public function getId(): int
     {
         return $this->id;
     }
 
-    /**
-     * @return Station
-     */
     public function getStation(): Station
     {
         return $this->station;
     }
 
-    /**
-     * @return Song|null
-     */
-    public function getSong(): ?Song
-    {
-        return $this->song;
-    }
-
-    /**
-     * @param Song|null $song
-     */
-    public function setSong(Song $song = null): void
-    {
-        $this->song = $song;
-    }
-
-    /**
-     * @return string|null
-     */
     public function getSongId(): ?string
     {
         return $this->song_id;
+    }
+
+    public function getTitle(): ?string
+    {
+        return $this->title;
+    }
+
+    public function setTitle(?string $title = null): void
+    {
+        $this->title = $this->truncateString($title, 200);
+    }
+
+    public function getArtist(): ?string
+    {
+        return $this->artist;
+    }
+
+    public function setArtist(?string $artist = null): void
+    {
+        $this->artist = $this->truncateString($artist, 200);
+    }
+
+    public function getAlbum(): ?string
+    {
+        return $this->album;
+    }
+
+    public function setAlbum(?string $album = null): void
+    {
+        $this->album = $this->truncateString($album, 200);
+    }
+
+    public function getLyrics(): ?string
+    {
+        return $this->lyrics;
+    }
+
+    public function setLyrics(?string $lyrics = null): void
+    {
+        $this->lyrics = $lyrics;
+    }
+
+    /**
+     * Get the Flysystem URI for album artwork for this item.
+     *
+     * @return string
+     */
+    public function getArtPath(): string
+    {
+        return Filesystem::PREFIX_ALBUM_ART . '://' . $this->unique_id . '.jpg';
+    }
+
+    public function getWaveformPath(): string
+    {
+        return Filesystem::PREFIX_WAVEFORMS . '://' . $this->unique_id . '.json';
+    }
+
+    public function getIsrc(): ?string
+    {
+        return $this->isrc;
+    }
+
+    public function setIsrc(?string $isrc = null): void
+    {
+        $this->isrc = $isrc;
+    }
+
+    public function getLength(): float
+    {
+        return $this->length;
+    }
+
+    /**
+     * @param int $length
+     */
+    public function setLength($length): void
+    {
+        $length_min = floor($length / 60);
+        $length_sec = $length % 60;
+
+        $this->length = (float)$length;
+        $this->length_text = $length_min . ':' . str_pad((string)$length_sec, 2, '0', STR_PAD_LEFT);
+    }
+
+    public function getLengthText(): ?string
+    {
+        return $this->length_text;
+    }
+
+    public function setLengthText(?string $length_text = null): void
+    {
+        $this->length_text = $length_text;
+    }
+
+    public function getPath(): ?string
+    {
+        return $this->path;
+    }
+
+    public function setPath(?string $path = null): void
+    {
+        $this->path = $path;
+    }
+
+    /**
+     * Return the abstracted "full path" filesystem URI for this record.
+     *
+     * @return string
+     */
+    public function getPathUri(): string
+    {
+        return Filesystem::PREFIX_MEDIA . '://' . $this->path;
+    }
+
+    public function getMtime(): ?int
+    {
+        return $this->mtime;
+    }
+
+    public function setMtime(?int $mtime = null): void
+    {
+        $this->mtime = $mtime;
+    }
+
+    public function getAmplify(): ?float
+    {
+        return $this->amplify;
+    }
+
+    public function setAmplify(?float $amplify = null): void
+    {
+        $this->amplify = $amplify;
+    }
+
+    public function getFadeOverlap(): ?float
+    {
+        return $this->fade_overlap;
+    }
+
+    public function setFadeOverlap(?float $fade_overlap = null): void
+    {
+        $this->fade_overlap = $fade_overlap;
+    }
+
+    public function getFadeIn(): ?float
+    {
+        return $this->fade_in;
+    }
+
+    /**
+     * @param string|float|null $fade_in
+     */
+    public function setFadeIn($fade_in = null): void
+    {
+        $this->fade_in = $this->parseSeconds($fade_in);
+    }
+
+    public function getFadeOut(): ?float
+    {
+        return $this->fade_out;
+    }
+
+    /**
+     * @param string|float|null $fade_out
+     */
+    public function setFadeOut($fade_out = null): void
+    {
+        $this->fade_out = $this->parseSeconds($fade_out);
+    }
+
+    public function getCueIn(): ?float
+    {
+        return $this->cue_in;
+    }
+
+    /**
+     * @param string|float|null $cue_in
+     */
+    public function setCueIn($cue_in = null): void
+    {
+        $this->cue_in = $this->parseSeconds($cue_in);
+    }
+
+    public function getCueOut(): ?float
+    {
+        return $this->cue_out;
+    }
+
+    /**
+     * @param string|float|null $cue_out
+     */
+    public function setCueOut($cue_out = null): void
+    {
+        $this->cue_out = $this->parseSeconds($cue_out);
+    }
+
+    /**
+     * @param string|float|null $seconds
+     *
+     * @return float|null
+     */
+    protected function parseSeconds($seconds = null): ?float
+    {
+        if ($seconds === '') {
+            return null;
+        }
+
+        if (false !== strpos($seconds, ':')) {
+            $sec = 0;
+            foreach (array_reverse(explode(':', $seconds)) as $k => $v) {
+                $sec += (60 ** (int)$k) * (int)$v;
+            }
+
+            return $sec;
+        }
+
+        return $seconds;
+    }
+
+    /**
+     * Get the length with cue-in and cue-out points included.
+     *
+     * @return int
+     */
+    public function getCalculatedLength(): int
+    {
+        $length = (int)$this->length;
+
+        if ((int)$this->cue_out > 0) {
+            $length_removed = $length - (int)$this->cue_out;
+            $length -= $length_removed;
+        }
+        if ((int)$this->cue_in > 0) {
+            $length -= $this->cue_in;
+        }
+
+        return $length;
+    }
+
+    public function getArtUpdatedAt(): int
+    {
+        return $this->art_updated_at;
+    }
+
+    public function setArtUpdatedAt(int $art_updated_at): void
+    {
+        $this->art_updated_at = $art_updated_at;
+    }
+
+    public function getItemForPlaylist(StationPlaylist $playlist): ?StationPlaylistMedia
+    {
+        $item = $this->playlists->filter(function ($spm) use ($playlist) {
+            /** @var StationPlaylistMedia $spm */
+            return $spm->getPlaylist()->getId() === $playlist->getId();
+        });
+
+        $firstItem = $item->first();
+
+        return ($firstItem instanceof StationPlaylistMedia)
+            ? $firstItem
+            : null;
+    }
+
+    public function getCustomFields(): Collection
+    {
+        return $this->custom_fields;
+    }
+
+    public function setCustomFields(Collection $custom_fields): void
+    {
+        $this->custom_fields = $custom_fields;
+    }
+
+    /**
+     * Indicate whether this media needs reprocessing given certain factors.
+     *
+     * @param int $current_mtime
+     *
+     * @return bool
+     */
+    public function needsReprocessing($current_mtime = 0): bool
+    {
+        if ($current_mtime > $this->mtime) {
+            return true;
+        }
+        if (!$this->songMatches()) {
+            return true;
+        }
+        return false;
     }
 
     /**
@@ -301,407 +582,14 @@ class StationMedia
         ]);
     }
 
-    /**
-     * @return null|string
-     */
-    public function getTitle(): ?string
+    public function getSong(): ?Song
     {
-        return $this->title;
+        return $this->song;
     }
 
-    /**
-     * @param null|string $title
-     */
-    public function setTitle(string $title = null): void
+    public function setSong(?Song $song = null): void
     {
-        $this->title = $this->_truncateString($title, 200);
-    }
-
-    /**
-     * @return null|string
-     */
-    public function getArtist(): ?string
-    {
-        return $this->artist;
-    }
-
-    /**
-     * @param null|string $artist
-     */
-    public function setArtist(string $artist = null): void
-    {
-        $this->artist = $this->_truncateString($artist, 200);
-    }
-
-    /**
-     * @return null|string
-     */
-    public function getAlbum(): ?string
-    {
-        return $this->album;
-    }
-
-    /**
-     * @param null|string $album
-     */
-    public function setAlbum(string $album = null): void
-    {
-        $this->album = $this->_truncateString($album, 200);
-    }
-
-    /**
-     * @return null|string
-     */
-    public function getLyrics(): ?string
-    {
-        return $this->lyrics;
-    }
-
-    /**
-     * @param null|string $lyrics
-     */
-    public function setLyrics($lyrics): void
-    {
-        $this->lyrics = $lyrics;
-    }
-
-    /**
-     * Get the Flysystem URI for album artwork for this item.
-     *
-     * @return string
-     */
-    public function getArtPath(): string
-    {
-        return 'albumart://'.$this->unique_id.'.jpg';
-    }
-
-    /**
-     * @return null|string
-     */
-    public function getIsrc(): ?string
-    {
-        return $this->isrc;
-    }
-
-    /**
-     * @param null|string $isrc
-     */
-    public function setIsrc(string $isrc = null): void
-    {
-        $this->isrc = $isrc;
-    }
-
-    /**
-     * @return int
-     */
-    public function getLength(): int
-    {
-        return $this->length;
-    }
-
-    /**
-     * @param int $length
-     */
-    public function setLength($length): void
-    {
-        $length_min = floor($length / 60);
-        $length_sec = $length % 60;
-
-        $this->length = (int)round($length);
-        $this->length_text = $length_min . ':' . str_pad($length_sec, 2, '0', STR_PAD_LEFT);
-    }
-
-    /**
-     * @return null|string
-     */
-    public function getLengthText(): ?string
-    {
-        return $this->length_text;
-    }
-
-    /**
-     * @param null|string $length_text
-     */
-    public function setLengthText(string $length_text = null): void
-    {
-        $this->length_text = $length_text;
-    }
-
-    /**
-     * @return null|string
-     */
-    public function getPath(): ?string
-    {
-        return $this->path;
-    }
-
-    /**
-     * @param null|string $path
-     */
-    public function setPath(string $path = null): void
-    {
-        $this->path = $path;
-    }
-
-    /**
-     * Return the abstracted "full path" filesystem URI for this record.
-     *
-     * @return string
-     */
-    public function getPathUri(): string
-    {
-        return 'media://'.$this->path;
-    }
-
-    /**
-     * @return int|null
-     */
-    public function getMtime(): ?int
-    {
-        return $this->mtime;
-    }
-
-    /**
-     * @param int|null $mtime
-     */
-    public function setMtime(int $mtime = null): void
-    {
-        $this->mtime = $mtime;
-    }
-
-    /**
-     * @return float|null
-     */
-    public function getFadeOverlap(): ?float
-    {
-        return $this->fade_overlap;
-    }
-
-    /**
-     * @param float|null $fade_overlap
-     */
-    public function setFadeOverlap($fade_overlap = null): void
-    {
-        if ($fade_overlap === '') {
-            $fade_overlap = null;
-        }
-
-        $this->fade_overlap = $fade_overlap;
-    }
-
-    /**
-     * @return float|null
-     */
-    public function getFadeIn(): ?float
-    {
-        return $this->fade_in;
-    }
-
-    /**
-     * @param float|null $fade_in
-     */
-    public function setFadeIn($fade_in = null): void
-    {
-        if ($fade_in === '') {
-            $fade_in = null;
-        }
-
-        $this->fade_in = $fade_in;
-    }
-
-    /**
-     * @return float|null
-     */
-    public function getFadeOut(): ?float
-    {
-        return $this->fade_out;
-    }
-
-    /**
-     * @param float|null $fade_out
-     */
-    public function setFadeOut($fade_out = null): void
-    {
-        if ($fade_out === '') {
-            $fade_out = null;
-        }
-
-        $this->fade_out = $fade_out;
-    }
-
-    /**
-     * @return float|null
-     */
-    public function getCueIn(): ?float
-    {
-        return $this->cue_in;
-    }
-
-    /**
-     * @param float|null $cue_in
-     */
-    public function setCueIn($cue_in = null): void
-    {
-        if ($cue_in === '') {
-            $cue_in = null;
-        }
-
-        $this->cue_in = $cue_in;
-    }
-
-    /**
-     * @return float|null
-     */
-    public function getCueOut(): ?float
-    {
-        return $this->cue_out;
-    }
-
-    /**
-     * @param float|null $cue_out
-     */
-    public function setCueOut($cue_out = null): void
-    {
-        if ($cue_out === '') {
-            $cue_out = null;
-        }
-
-        $this->cue_out = $cue_out;
-    }
-
-    /**
-     * Get the length with cue-in and cue-out points included.
-     *
-     * @return int
-     */
-    public function getCalculatedLength(): int
-    {
-        $length = (int)$this->length;
-
-        if ((int)$this->cue_out > 0) {
-            $length_removed = $length - (int)$this->cue_out;
-            $length -= $length_removed;
-        }
-        if ((int)$this->cue_in > 0) {
-            $length -= $this->cue_in;
-        }
-
-        return $length;
-    }
-
-    /**
-     * @return Collection
-     */
-    public function getPlaylists(): Collection
-    {
-        return $this->playlists;
-    }
-
-    /**
-     * @param StationPlaylist $playlist
-     * @return StationPlaylistMedia|null
-     */
-    public function getItemForPlaylist(StationPlaylist $playlist): ?StationPlaylistMedia
-    {
-        $item = $this->playlists->filter(function($spm) use ($playlist) {
-            /** @var StationPlaylistMedia $spm */
-            return $spm->getPlaylist()->getId() === $playlist->getId();
-        });
-
-        return $item->first() ?? null;
-    }
-
-    /**
-     * @return Collection
-     */
-    public function getCustomFields(): Collection
-    {
-        return $this->custom_fields;
-    }
-
-    /**
-     * @param Collection $custom_fields
-     */
-    public function setCustomFields(Collection $custom_fields): void
-    {
-        $this->custom_fields = $custom_fields;
-    }
-
-    /**
-     * Indicate whether this media needs reprocessing given certain factors.
-     *
-     * @param int $current_mtime
-     * @return bool
-     */
-    public function needsReprocessing($current_mtime = 0): bool
-    {
-        if ($current_mtime > $this->mtime) {
-            return true;
-        }
-        if (!$this->songMatches()) {
-            return true;
-        }
-        return false;
-    }
-
-    /**
-     * Assemble a list of annotations for LiquidSoap.
-     *
-     * Liquidsoap expects a string similar to:
-     *     annotate:type="song",album="$ALBUM",display_desc="$FULLSHOWNAME",
-     *     liq_start_next="2.5",liq_fade_in="3.5",liq_fade_out="3.5":$SONGPATH
-     *
-     * @return array
-     */
-    public function getAnnotations(): array
-    {
-        $annotations = [];
-        $annotation_types = [
-            'title'         => $this->title,
-            'artist'        => $this->artist,
-            'duration'      => $this->length,
-            'song_id'       => $this->getSong()->getId(),
-            'media_id'      => $this->id,
-            'liq_start_next' => $this->fade_overlap,
-            'liq_fade_in'   => $this->fade_in,
-            'liq_fade_out'  => $this->fade_out,
-            'liq_cue_in'    => $this->cue_in,
-            'liq_cue_out'   => $this->cue_out,
-        ];
-
-        // Safety checks for cue lengths.
-        if ($annotation_types['liq_cue_out'] < 0) {
-            $cue_out = abs($annotation_types['liq_cue_out']);
-            if (0 === $cue_out || $cue_out > $annotation_types['duration']) {
-                $annotation_types['liq_cue_out'] = null;
-            } else {
-                $annotation_types['liq_cue_out'] = max(0, $annotation_types['duration'] - $cue_out);
-            }
-        }
-        if (($annotation_types['liq_cue_in'] + $annotation_types['liq_cue_out']) > $annotation_types['duration']) {
-            $annotation_types['liq_cue_out'] = null;
-        }
-        if ($annotation_types['liq_cue_in'] > $annotation_types['duration']) {
-            $annotation_types['liq_cue_in'] = null;
-        }
-
-        foreach ($annotation_types as $annotation_name => $prop) {
-            if (null === $prop) {
-                continue;
-            }
-
-            $prop = mb_convert_encoding($prop, 'UTF-8');
-            $prop = str_replace(['"', "\n", "\t", "\r"], ["'", '', '', ''], $prop);
-
-            // Convert Liquidsoap-specific annotations to floats.
-            if ('duration' === $annotation_name || 0 === strpos($annotation_name, 'liq')) {
-                $prop = Liquidsoap::toFloat($prop);
-            }
-
-            $annotations[$annotation_name] = $prop;
-        }
-
-        return $annotations;
+        $this->song = $song;
     }
 
     /**
@@ -712,7 +600,7 @@ class StationMedia
     public function isRequestable(): bool
     {
         $playlists = $this->getPlaylists();
-        foreach($playlists as $playlist_item) {
+        foreach ($playlists as $playlist_item) {
             $playlist = $playlist_item->getPlaylist();
             /** @var StationPlaylist $playlist */
             if ($playlist->isRequestable()) {
@@ -723,14 +611,25 @@ class StationMedia
         return false;
     }
 
+    public function getPlaylists(): Collection
+    {
+        return $this->playlists;
+    }
+
+    public function __toString(): string
+    {
+        return 'StationMedia ' . $this->unique_id . ': ' . $this->artist . ' - ' . $this->title;
+    }
+
     /**
      * Retrieve the API version of the object/array.
      *
-     * @param \App\ApiUtilities $api_utils
-     * @param UriInterface|null $base_url
+     * @param ApiUtilities $apiUtils
+     * @param UriInterface|null $baseUri
+     *
      * @return Api\Song
      */
-    public function api(\App\ApiUtilities $api_utils, UriInterface $base_url = null): Api\Song
+    public function api(ApiUtilities $apiUtils, UriInterface $baseUri = null): Api\Song
     {
         $response = new Api\Song;
         $response->id = (string)$this->song_id;
@@ -741,8 +640,13 @@ class StationMedia
         $response->album = (string)$this->album;
         $response->lyrics = (string)$this->lyrics;
 
-        $response->art = $api_utils->getAlbumArtUrl($this->station_id, $this->unique_id, $base_url);
-        $response->custom_fields = $api_utils->getCustomFields($this->id);
+        $response->art = $apiUtils->getAlbumArtUrl(
+            $this->station,
+            $this->unique_id,
+            $this->art_updated_at,
+            $baseUri
+        );
+        $response->custom_fields = $apiUtils->getCustomFields($this->id);
 
         return $response;
     }

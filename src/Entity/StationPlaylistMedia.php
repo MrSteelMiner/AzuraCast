@@ -2,12 +2,13 @@
 namespace App\Entity;
 
 use Doctrine\ORM\Mapping as ORM;
+use JsonSerializable;
 
 /**
  * @ORM\Table(name="station_playlist_media")
- * @ORM\Entity(repositoryClass="App\Entity\Repository\StationPlaylistMediaRepository")
+ * @ORM\Entity()
  */
-class StationPlaylistMedia implements \JsonSerializable
+class StationPlaylistMedia implements JsonSerializable
 {
     /**
      * @ORM\Column(name="id", type="integer")
@@ -48,7 +49,7 @@ class StationPlaylistMedia implements \JsonSerializable
     protected $media;
 
     /**
-     * @ORM\Column(name="weight", type="smallint")
+     * @ORM\Column(name="weight", type="integer")
      * @var int
      */
     protected $weight;
@@ -59,10 +60,6 @@ class StationPlaylistMedia implements \JsonSerializable
      */
     protected $last_played;
 
-    /**
-     * @param StationPlaylist $playlist
-     * @param StationMedia $media
-     */
     public function __construct(StationPlaylist $playlist, StationMedia $media)
     {
         $this->playlist = $playlist;
@@ -71,57 +68,39 @@ class StationPlaylistMedia implements \JsonSerializable
         $this->last_played = 0;
     }
 
-    /**
-     * @return int
-     */
     public function getId(): int
     {
         return $this->id;
     }
 
-    /**
-     * @return StationPlaylist
-     */
     public function getPlaylist(): StationPlaylist
     {
         return $this->playlist;
     }
 
-    /**
-     * @return StationMedia
-     */
     public function getMedia(): StationMedia
     {
         return $this->media;
     }
 
-    /**
-     * @return int
-     */
     public function getWeight(): int
     {
         return $this->weight;
     }
 
-    /**
-     * @param int $weight
-     */
     public function setWeight(int $weight): void
     {
         $this->weight = $weight;
     }
 
-    /**
-     * @return int
-     */
     public function getLastPlayed(): int
     {
         return $this->last_played;
     }
 
-    public function played(): void
+    public function played(int $timestamp = null): void
     {
-        $this->last_played = time();
+        $this->last_played = $timestamp ?? time();
     }
 
     /**

@@ -7,6 +7,7 @@ use Doctrine\Common\Annotations\Reader;
 use Doctrine\Common\EventSubscriber;
 use Doctrine\ORM\Event\OnFlushEventArgs;
 use Doctrine\ORM\Events;
+use ReflectionObject;
 
 /**
  * A hook into Doctrine's event listener to mark a station as
@@ -14,12 +15,8 @@ use Doctrine\ORM\Events;
  */
 class StationRequiresRestart implements EventSubscriber
 {
-    /** @var Reader */
-    protected $reader;
+    protected Reader $reader;
 
-    /**
-     * @param Reader $reader
-     */
     public function __construct(Reader $reader)
     {
         $this->reader = $reader;
@@ -32,7 +29,7 @@ class StationRequiresRestart implements EventSubscriber
         ];
     }
 
-    public function onFlush(OnFlushEventArgs $args)
+    public function onFlush(OnFlushEventArgs $args): void
     {
         $em = $args->getEntityManager();
         $uow = $em->getUnitOfWork();
@@ -44,7 +41,7 @@ class StationRequiresRestart implements EventSubscriber
         ];
 
         $stations_to_restart = [];
-        foreach($collections_to_check as $change_type => $collection) {
+        foreach ($collections_to_check as $change_type => $collection) {
             foreach ($collection as $entity) {
                 if (($entity instanceof Entity\StationMount)
                     || ($entity instanceof Entity\StationRemote && $entity->isEditable())
@@ -53,9 +50,8 @@ class StationRequiresRestart implements EventSubscriber
                         $changes = $uow->getEntityChangeSet($entity);
 
                         // Look for the @AuditIgnore annotation on a property.
-                        $class_reflection = new \ReflectionObject($entity);
-                        foreach($changes as $change_field => $changeset)
-                        {
+                        $class_reflection = new ReflectionObject($entity);
+                        foreach ($changes as $change_field => $changeset) {
                             $property = $class_reflection->getProperty($change_field);
                             $annotation = $this->reader->getPropertyAnnotation($property, AuditIgnore::class);
 
@@ -69,7 +65,6 @@ class StationRequiresRestart implements EventSubscriber
                         }
                     }
 
-                    /** @var Entity\Station $station */
                     $station = $entity->getStation();
                     $stations_to_restart[$station->getId()] = $station;
                 }
@@ -77,7 +72,7 @@ class StationRequiresRestart implements EventSubscriber
         }
 
         if (count($stations_to_restart) > 0) {
-            foreach($stations_to_restart as $station) {
+            foreach ($stations_to_restart as $station) {
                 $station->setNeedsRestart(true);
                 $em->persist($station);
 

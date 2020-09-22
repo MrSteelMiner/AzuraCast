@@ -2,185 +2,176 @@
 namespace App\Sync\Task;
 
 use App\Entity;
+use App\Exception;
 use App\Radio\Adapters;
-use Azura\Exception;
-use Cake\Chronos\Chronos;
-use Doctrine\ORM\EntityManager;
-use Monolog\Logger;
+use Carbon\CarbonImmutable;
+use Doctrine\ORM\EntityManagerInterface;
+use DoctrineBatchUtils\BatchProcessing\SimpleBatchIteratorAggregate;
+use Psr\Log\LoggerInterface;
 
 class RadioAutomation extends AbstractTask
 {
-    const DEFAULT_THRESHOLD_DAYS = 14;
+    public const DEFAULT_THRESHOLD_DAYS = 14;
 
-    /** @var Adapters */
-    protected $adapters;
+    protected Entity\Repository\StationMediaRepository $mediaRepo;
 
-    /**
-     * @param EntityManager $em
-     * @param Logger $logger
-     * @param Adapters $adapters
-     */
-    public function __construct(EntityManager $em, Logger $logger, Adapters $adapters)
-    {
-        parent::__construct($em, $logger);
+    protected Adapters $adapters;
 
+    public function __construct(
+        EntityManagerInterface $em,
+        Entity\Repository\SettingsRepository $settingsRepo,
+        LoggerInterface $logger,
+        Entity\Repository\StationMediaRepository $mediaRepo,
+        Adapters $adapters
+    ) {
+        parent::__construct($em, $settingsRepo, $logger);
+
+        $this->mediaRepo = $mediaRepo;
         $this->adapters = $adapters;
     }
 
     /**
      * Iterate through all stations and attempt to run automated assignment.
+     *
      * @param bool $force
      */
-    public function run($force = false): void
+    public function run(bool $force = false): void
     {
         // Check all stations for automation settings.
-        $stations = $this->em->getRepository(Entity\Station::class)->findAll();
-
-        /** @var Entity\Repository\SettingsRepository $settings_repo */
-        $settings_repo = $this->em->getRepository(Entity\Settings::class);
-
-        $automation_log = $settings_repo->getSetting('automation_log', []);
+        // Use this to avoid detached entity errors.
+        $stations = SimpleBatchIteratorAggregate::fromQuery(
+            $this->em->createQuery(/** @lang DQL */ 'SELECT s FROM App\Entity\Station s'),
+            1
+        );
 
         foreach ($stations as $station) {
             /** @var Entity\Station $station */
             try {
                 if ($this->runStation($station)) {
-                    $automation_log[$station->getId()] = $station->getName() . ': SUCCESS';
+                    $this->logger->info('Automated assignment [' . $station->getName() . ']: Successfully run.');
+                } else {
+                    $this->logger->info('Automated assignment [' . $station->getName() . ']: Skipped.');
                 }
             } catch (Exception $e) {
-                $automation_log[$station->getId()] = $station->getName() . ': ERROR - ' . $e->getMessage();
+                $this->logger->error('Automated assignment [' . $station->getName() . ']: Error: ' . $e->getMessage());
             }
         }
-
-        $settings_repo->setSetting('automation_log', $automation_log);
     }
 
-    /**
-     * Run automated assignment (if enabled) for a given $station.
-     *
-     * @param Entity\Station $station
-     * @param bool $force
-     * @return bool
-     * @throws Exception
-     */
-    public function runStation(Entity\Station $station, $force = false)
+    public function runStation(Entity\Station $station, bool $force = false): bool
     {
         $settings = (array)$station->getAutomationSettings();
 
-        if (empty($settings)) {
-            throw new Exception('Automation has not been configured for this station yet.');
-        }
-
-        if (!$settings['is_enabled']) {
-            throw new Exception('Automation is not enabled for this station.');
+        if (empty($settings) || !$settings['is_enabled']) {
+            return false;
         }
 
         // Check whether assignment needs to be run.
         $threshold_days = (int)$settings['threshold_days'];
-        $threshold = time() - (86400 * $threshold_days);
+        $threshold = CarbonImmutable::now('UTC')
+            ->subDays($threshold_days)
+            ->getTimestamp();
 
         if (!$force && $station->getAutomationTimestamp() >= $threshold) {
             return false;
         } // No error, but no need to run assignment.
 
-        $playlists = [];
-        $original_playlists = [];
 
-        // Related playlists are already automatically sorted by weight.
-        $i = 0;
+        // Pull songs in current playlists, then clear those playlists.
+        $getSongsInPlaylistQuery = $this->em->createQuery(/** @lang DQL */ 'SELECT 
+            sm.id
+            FROM App\Entity\StationPlaylistMedia spm
+            JOIN spm.media sm
+            WHERE spm.playlist = :playlist');
+
+        $mediaToUpdate = [];
+        $playlists = [];
 
         foreach ($station->getPlaylists() as $playlist) {
             /** @var Entity\StationPlaylist $playlist */
-
             if ($playlist->getIsEnabled() &&
-                $playlist->getType() == Entity\StationPlaylist::TYPE_DEFAULT &&
+                $playlist->getType() === Entity\StationPlaylist::TYPE_DEFAULT &&
                 $playlist->getIncludeInAutomation()
             ) {
+                $playlists[] = $playlist->getId();
+
                 // Clear all related media.
-                foreach ($playlist->getMediaItems() as $media_item) {
-                    $media = $media_item->getMedia();
-                    $song = $media->getSong();
-                    if ($song instanceof Entity\Song) {
-                        $original_playlists[$song->getId()][] = $i;
-                    }
+                $mediaInPlaylist = $getSongsInPlaylistQuery->setParameter('playlist', $playlist)
+                    ->getArrayResult();
 
-                    $this->em->remove($media_item);
+                foreach ($mediaInPlaylist as $media) {
+                    $mediaToUpdate[$media['id']] = [
+                        'old_playlist_id' => $playlist->getId(),
+                        'new_playlist_id' => $playlist->getId(),
+                    ];
                 }
-
-                $playlists[$i] = $playlist;
-
-                $i++;
             }
         }
 
-        if (count($playlists) == 0) {
+        if (0 === count($playlists)) {
             throw new Exception('No playlists have automation enabled.');
         }
 
-        $this->em->flush();
+        // Generate the actual report for listenership.
+        $mediaReport = $this->generateReport($station, $threshold_days);
 
-        $media_report = $this->generateReport($station, $threshold_days);
-
-        $media_report = array_filter($media_report, function ($media) use ($original_playlists) {
-            // Remove songs that are already in non-auto-assigned playlists.
-            if (!empty($media['playlists'])) {
-                return false;
-            }
-
-            // Remove songs that weren't already in auto-assigned playlists.
-            if (!isset($original_playlists[$media['song_id']])) {
-                return false;
-            }
-
-            return true;
+        // Remove songs that weren't already in auto-assigned playlists.
+        $mediaReport = array_filter($mediaReport, function ($media) use ($mediaToUpdate) {
+            return (isset($mediaToUpdate[$media['id']]));
         });
 
         // Place all songs with 0 plays back in their original playlists.
-        foreach ($media_report as $song_id => $media) {
-            if ($media['num_plays'] == 0 && isset($original_playlists[$song_id])) {
-                $media_row = $media['record'];
-
-                foreach ($original_playlists[$song_id] as $playlist_key) {
-                    $spm = new Entity\StationPlaylistMedia($playlists[$playlist_key], $media_row);
-                    $this->em->persist($spm);
-                }
-
-                unset($media_report[$song_id]);
+        foreach ($mediaReport as $song_id => $media) {
+            if ($media['num_plays'] === 0 && isset($original_playlists[$song_id])) {
+                unset($mediaToUpdate[$media['id']], $mediaReport[$song_id]);
             }
         }
 
-        $this->em->flush();
-
         // Sort songs by ratio descending.
-        uasort($media_report, function ($a_media, $b_media) {
-            $a = (int)$a_media['ratio'];
-            $b = (int)$b_media['ratio'];
-
-            return ($a < $b) ? 1 : (($a > $b) ? -1 : 0);
+        uasort($mediaReport, function ($a_media, $b_media) {
+            return (int)$b_media['ratio'] <=> (int)$a_media['ratio'];
         });
 
         // Distribute media across the enabled playlists and assign media to playlist.
-        $num_songs = count($media_report);
-        $num_playlists = count($playlists);
-        $songs_per_playlist = floor($num_songs / $num_playlists);
+        $numSongs = count($mediaReport);
+        $numPlaylists = count($playlists);
+
+        $songsPerPlaylist = (int)floor($numSongs / $numPlaylists);
 
         $i = 0;
-
-        foreach ($playlists as $playlist) {
-            if ($i == 0) {
-                $playlist_num_songs = $songs_per_playlist + ($num_songs % $num_playlists);
+        foreach ($playlists as $playlistId) {
+            if ($i === 0) {
+                $playlistNumSongs = $songsPerPlaylist + ($numSongs % $numPlaylists);
             } else {
-                $playlist_num_songs = $songs_per_playlist;
+                $playlistNumSongs = $songsPerPlaylist;
             }
 
-            $media_in_playlist = array_slice($media_report, $i, $playlist_num_songs);
+            $media_in_playlist = array_slice($mediaReport, $i, $playlistNumSongs);
             foreach ($media_in_playlist as $media) {
-                $spm = new Entity\StationPlaylistMedia($playlist, $media['record']);
-                $this->em->persist($spm);
+                $mediaToUpdate[$media['id']]['new_playlist_id'] = $playlistId;
             }
 
-            $i += $playlist_num_songs;
+            $i += $playlistNumSongs;
         }
+
+        // Update media playlist placement.
+        $updateMediaPlaylistQuery = $this->em->createQuery(/** @lang DQL */ 'UPDATE 
+            App\Entity\StationPlaylistMedia spm
+            SET spm.playlist_id = :new_playlist_id
+            WHERE spm.playlist_id = :old_playlist_id
+            AND spm.media_id = :media_id');
+
+        foreach ($mediaToUpdate as $mediaId => $playlists) {
+            $updateMediaPlaylistQuery->setParameter('media_id', $mediaId)
+                ->setParameter('old_playlist_id', $playlists['old_playlist_id'])
+                ->setParameter('new_playlist_id', $playlists['new_playlist_id'])
+                ->execute();
+        }
+
+        $this->em->clear();
+
+        /** @var Entity\Station $station */
+        $station = $this->em->find(Entity\Station::class, $station->getId());
 
         $station->setAutomationTimestamp(time());
         $this->em->persist($station);
@@ -193,32 +184,29 @@ class RadioAutomation extends AbstractTask
         return true;
     }
 
-    /**
-     * Generate a Performance Report for station $station's songs over the last $threshold_days days.
-     *
-     * @param Entity\Station $station
-     * @param int $threshold_days
-     * @return array
-     */
-    public function generateReport(Entity\Station $station, $threshold_days = self::DEFAULT_THRESHOLD_DAYS)
-    {
-        $threshold = Chronos::now()->subDays((int)$threshold_days)->getTimestamp();
+    public function generateReport(
+        Entity\Station $station,
+        int $threshold_days = self::DEFAULT_THRESHOLD_DAYS
+    ): array {
+        $threshold = CarbonImmutable::now()
+            ->subDays($threshold_days)
+            ->getTimestamp();
 
         // Pull all SongHistory data points.
-        $data_points_raw = $this->em->createQuery(/** @lang DQL */'SELECT 
+        $dataPointsRaw = $this->em->createQuery(/** @lang DQL */ 'SELECT 
             sh.song_id, sh.timestamp_start, sh.delta_positive, sh.delta_negative, sh.listeners_start 
             FROM App\Entity\SongHistory sh 
-            WHERE sh.station_id = :station_id 
+            WHERE sh.station = :station 
             AND sh.timestamp_end != 0 
             AND sh.timestamp_start >= :threshold')
-            ->setParameter('station_id', $station->getId())
+            ->setParameter('station', $station)
             ->setParameter('threshold', $threshold)
             ->getArrayResult();
 
         $total_plays = 0;
         $data_points = [];
 
-        foreach ($data_points_raw as $row) {
+        foreach ($dataPointsRaw as $row) {
             $total_plays++;
 
             if (!isset($data_points[$row['song_id']])) {
@@ -228,34 +216,29 @@ class RadioAutomation extends AbstractTask
             $data_points[$row['song_id']][] = $row;
         }
 
-        /** @var Entity\Repository\StationMediaRepository $media_repo */
-        $media_repo = $this->em->getRepository(Entity\StationMedia::class);
-
-        $media_raw = $this->em->createQuery(/** @lang DQL */ 'SELECT 
-            sm, spm, sp 
+        $mediaQuery = $this->em->createQuery(/** @lang DQL */ 'SELECT 
+            sm
             FROM App\Entity\StationMedia sm 
-            LEFT JOIN sm.playlists spm 
-            LEFT JOIN spm.playlist sp 
             WHERE sm.station_id = :station_id 
             ORDER BY sm.artist ASC, sm.title ASC')
-            ->setParameter('station_id', $station->getId())
-            ->execute();
+            ->setParameter('station_id', $station->getId());
 
+        $iterator = SimpleBatchIteratorAggregate::fromQuery($mediaQuery, 100);
         $report = [];
 
-        foreach ($media_raw as $row_obj) {
-            /** @var Entity\StationMedia $row_obj */
-            $row = $media_repo->toArray($row_obj);
+        foreach ($iterator as $row) {
+            /** @var Entity\StationMedia $row */
+            $songId = $row->getSongId();
 
             $media = [
-                'song_id' => $row['song_id'],
-                'record' => $row_obj,
+                'id' => $row->getId(),
+                'song_id' => $songId,
 
-                'title' => $row['title'],
-                'artist' => $row['artist'],
-                'length_raw' => $row['length'],
-                'length' => $row['length_text'],
-                'path' => $row['path'],
+                'title' => $row->getTitle(),
+                'artist' => $row->getArtist(),
+                'length_raw' => $row->getLength(),
+                'length' => $row->getLengthText(),
+                'path' => $row->getPath(),
 
                 'playlists' => [],
                 'data_points' => [],
@@ -270,18 +253,18 @@ class RadioAutomation extends AbstractTask
                 'ratio' => 0,
             ];
 
-            if ($row_obj->getPlaylists()->count() > 0) {
-                foreach ($row_obj->getPlaylists() as $playlist_item) {
+            if ($row->getPlaylists()->count() > 0) {
+                foreach ($row->getPlaylists() as $playlist_item) {
                     /** @var Entity\StationPlaylistMedia $playlist_item */
                     $playlist = $playlist_item->getPlaylist();
                     $media['playlists'][] = $playlist->getName();
                 }
             }
 
-            if (isset($data_points[$row['song_id']])) {
+            if (isset($data_points[$songId])) {
                 $ratio_points = [];
 
-                foreach ($data_points[$row['song_id']] as $data_row) {
+                foreach ($data_points[$songId] as $data_row) {
                     $media['num_plays']++;
 
                     $media['delta_positive'] += $data_row['delta_positive'];
@@ -307,7 +290,7 @@ class RadioAutomation extends AbstractTask
                 $media['ratio'] = round(array_sum($ratio_points) / count($ratio_points), 3);
             }
 
-            $report[$row['song_id']] = $media;
+            $report[$songId] = $media;
         }
 
         return $report;

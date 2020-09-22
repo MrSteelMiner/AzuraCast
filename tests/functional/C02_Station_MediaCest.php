@@ -1,56 +1,39 @@
 <?php
+
+use App\Settings;
+
 class C02_Station_MediaCest extends CestAbstract
 {
     /**
      * @before setupComplete
      * @before login
      */
-    public function editMedia(FunctionalTester $I)
+    public function editMedia(FunctionalTester $I): void
     {
         $I->wantTo('Upload a song to a station.');
 
-        $station_id = $this->test_station->getId();
+        $testStation = $this->getTestStation();
+        $station_id = $testStation->getId();
 
-        $test_song_orig = $this->settings[\Azura\Settings::BASE_DIR].'/resources/error.mp3';
-        $test_song = tempnam(sys_get_temp_dir(), 'azuracast');
-        copy($test_song_orig, $test_song);
-
-        /** @var \Azura\Session $session */
-        $session = $this->di->get(\Azura\Session::class);
-        $csrf = $session->getCsrf();
-
-        $test_file = [
-            'tmp_name'  => $test_song,
-            'name'      => basename($test_song),
-            'type'      => 'audio/mpeg',
-            'size'      => filesize($test_song),
-            'error'     => \UPLOAD_ERR_OK
-        ];
-
-        $I->sendPOST('/station/'.$station_id.'/files/upload', [
-            'file' => '',
-            'csrf' => $csrf->generate('stations_files'),
-            'flowIdentifier' => 'uploadtest',
-            'flowChunkNumber' => 1,
-            'flowCurrentChunkSize' => filesize($test_song),
-            'flowFilename' => 'error.mp3',
-            'flowTotalSize' => filesize($test_song),
-            'flowTotalChunks' => 1,
-        ], [
-            'file_data' => $test_file
+        // Upload test song
+        $test_song_orig = $this->settings[Settings::BASE_DIR] . '/resources/error.mp3';
+        $I->sendPOST('/api/station/' . $station_id . '/files', [
+            'path' => 'error.mp3',
+            'file' => base64_encode(file_get_contents($test_song_orig)),
         ]);
 
         $I->seeResponseContainsJson([
-            'success' => true,
+            'title' => 'AzuraCast is Live!',
+            'artist' => 'AzuraCast.com',
         ]);
 
-        $I->sendGET('/station/'.$station_id.'/files/list');
+        $I->sendGET('/api/station/' . $station_id . '/files/list');
 
         $I->seeResponseContainsJson([
             'media_name' => 'AzuraCast.com - AzuraCast is Live!',
         ]);
 
-        $I->amOnPage('/station/'.$station_id.'/files');
+        $I->amOnPage('/station/' . $station_id . '/files');
 
         $I->see('Music Files');
     }

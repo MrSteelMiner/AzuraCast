@@ -1,36 +1,27 @@
 <?php
 namespace App\Form;
 
+use App\Config;
 use App\Entity;
 use App\Http\ServerRequest;
-use Azura\Config;
-use Doctrine\ORM\EntityManager;
+use Doctrine\ORM\EntityManagerInterface;
 use Symfony\Component\Serializer\Serializer;
 use Symfony\Component\Validator\Validator\ValidatorInterface;
 
 class PermissionsForm extends EntityForm
 {
-    /** @var Entity\Repository\RolePermissionRepository */
-    protected $permissions_repo;
+    protected Entity\Repository\RolePermissionRepository $permissions_repo;
 
-    /** @var bool */
-    protected $set_permissions = true;
+    protected bool $set_permissions = true;
 
-    /**
-     * @param EntityManager $em
-     * @param Serializer $serializer
-     * @param ValidatorInterface $validator
-     * @param Config $config
-     */
     public function __construct(
-        EntityManager $em,
+        EntityManagerInterface $em,
         Serializer $serializer,
         ValidatorInterface $validator,
-        Config $config
+        Config $config,
+        Entity\Repository\StationRepository $stations_repo,
+        Entity\Repository\RolePermissionRepository $permissions_repo
     ) {
-        /** @var Entity\Repository\StationRepository $stations_repo */
-        $stations_repo = $em->getRepository(Entity\Station::class);
-
         $form_config = $config->get('forms/role', [
             'all_stations' => $stations_repo->fetchArray(),
         ]);
@@ -38,18 +29,15 @@ class PermissionsForm extends EntityForm
         parent::__construct($em, $serializer, $validator, $form_config);
 
         $this->entityClass = Entity\Role::class;
-        $this->permissions_repo = $em->getRepository(Entity\RolePermission::class);
+        $this->permissions_repo = $permissions_repo;
     }
 
-    /**
-     * @inheritdoc
-     */
     public function process(ServerRequest $request, $record = null)
     {
         if ($record instanceof Entity\Role && Entity\Role::SUPER_ADMINISTRATOR_ROLE_ID === $record->getId()) {
             $this->set_permissions = false;
 
-            foreach($this->fields as $field_id => $field) {
+            foreach ($this->fields as $field_id => $field) {
                 $attrs = $field->getAttributes();
                 if (isset($attrs['class']) && strpos($attrs['class'], 'permission-select') !== false) {
                     unset($this->fields[$field_id]);
@@ -60,9 +48,6 @@ class PermissionsForm extends EntityForm
         return parent::process($request, $record);
     }
 
-    /**
-     * @inheritdoc
-     */
     protected function _denormalizeToRecord($data, $record = null, array $context = []): object
     {
         $record = parent::_denormalizeToRecord($data, $record, $context);
@@ -77,9 +62,6 @@ class PermissionsForm extends EntityForm
         return $record;
     }
 
-    /**
-     * @inheritdoc
-     */
     protected function _normalizeRecord($record, array $context = []): array
     {
         $data = parent::_normalizeRecord($record, $context);

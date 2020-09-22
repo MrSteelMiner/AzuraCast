@@ -3,39 +3,31 @@ namespace App\Event\Radio;
 
 use App\Entity\Station;
 use App\Radio;
+use NowPlaying\Result\Result;
 use Symfony\Contracts\EventDispatcher\Event;
 
 class GenerateRawNowPlaying extends Event
 {
-    /** @var Station */
-    protected $station;
+    protected Station $station;
 
-    /** @var Radio\Frontend\AbstractFrontend */
-    protected $frontend;
+    protected Radio\Frontend\AbstractFrontend $frontend;
 
     /** @var Radio\Remote\AdapterProxy[] */
-    protected $remotes;
+    protected array $remotes;
 
-    /** @var bool */
-    protected $include_clients = false;
+    protected bool $include_clients = false;
 
-    /** @var string|null The preloaded "payload" to supply to the nowplaying adapters, if one is available. */
-    protected $payload;
-
-    /** @var array The composed "raw" NowPlaying data. */
-    protected $np_raw = [];
+    protected ?Result $result = null;
 
     public function __construct(
         Station $station,
         Radio\Frontend\AbstractFrontend $frontend,
         array $remotes,
-        $payload = null,
         $include_clients = false
     ) {
         $this->station = $station;
         $this->frontend = $frontend;
         $this->remotes = $remotes;
-        $this->payload = $payload;
         $this->include_clients = $include_clients;
     }
 
@@ -62,18 +54,13 @@ class GenerateRawNowPlaying extends Event
         return $this->include_clients;
     }
 
-    public function getPayload(): ?string
+    public function getResult(): Result
     {
-        return $this->payload;
+        return $this->result ?? Result::blank();
     }
 
-    public function getRawResponse(): array
+    public function setResult(Result $result): void
     {
-        return $this->np_raw;
-    }
-
-    public function setRawResponse(array $np): void
-    {
-        $this->np_raw = $np;
+        $this->result = $result;
     }
 }

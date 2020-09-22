@@ -1,16 +1,19 @@
 <?php
 namespace App\Entity;
 
+use App\ApiUtilities;
+use App\Exception;
 use Doctrine\Common\Collections\ArrayCollection;
 use Doctrine\Common\Collections\Collection;
 use Doctrine\ORM\Mapping as ORM;
+use NowPlaying\Result\CurrentSong;
 use Psr\Http\Message\UriInterface;
 
 /**
  * @ORM\Table(name="songs", indexes={
  *   @ORM\Index(name="search_idx", columns={"text", "artist", "title"})
  * })
- * @ORM\Entity(repositoryClass="App\Entity\Repository\SongRepository")
+ * @ORM\Entity()
  */
 class Song
 {
@@ -68,13 +71,8 @@ class Song
      */
     protected $history;
 
-    /**
-     * Song constructor.
-     * @param array $song_info
-     */
     public function __construct(array $song_info)
     {
-
         $this->created = time();
         $this->history = new ArrayCollection;
         $this->update($song_info);
@@ -96,115 +94,22 @@ class Song
             }
         }
 
-        $this->text = $this->_truncateString($song_info['text'], 150);
-        $this->title = $this->_truncateString($song_info['title'], 150);
-        $this->artist = $this->_truncateString($song_info['artist'], 150);
+        $this->text = $this->truncateString($song_info['text'], 150);
+        $this->title = $this->truncateString($song_info['title'], 150);
+        $this->artist = $this->truncateString($song_info['artist'], 150);
 
         $new_song_hash = self::getSongHash($song_info);
 
         if (null === $this->id) {
             $this->id = $new_song_hash;
-        } else if ($this->id !== $new_song_hash) {
-            throw new \Azura\Exception('New song data supplied would not produce the same song ID.');
+        } elseif ($this->id !== $new_song_hash) {
+            throw new Exception('New song data supplied would not produce the same song ID.');
         }
     }
 
     /**
-     * @return string
-     */
-    public function getId(): string
-    {
-        return $this->id;
-    }
-
-    /**
-     * @return string|null
-     */
-    public function getText(): ?string
-    {
-        return $this->text;
-    }
-
-    /**
-     * @return string|null
-     */
-    public function getArtist(): ?string
-    {
-        return $this->artist;
-    }
-
-    /**
-     * @return string|null
-     */
-    public function getTitle(): ?string
-    {
-        return $this->title;
-    }
-
-    /**
-     * @return int
-     */
-    public function getCreated(): int
-    {
-        return $this->created;
-    }
-
-    /**
-     * @return int
-     */
-    public function getPlayCount(): int
-    {
-        return $this->play_count;
-    }
-
-    /**
-     * @return int
-     */
-    public function getLastPlayed(): int
-    {
-        return $this->last_played;
-    }
-
-    /**
-     * Increment the play counter and last-played items.
-     */
-    public function played(): void
-    {
-        ++$this->play_count;
-        $this->last_played = time();
-    }
-
-    /**
-     * @return Collection
-     */
-    public function getHistory(): Collection
-    {
-        return $this->history;
-    }
-
-    /**
-     * Retrieve the API version of the object/array.
-     *
-     * @param \App\ApiUtilities $api_utils
-     * @param UriInterface|null $base_url
-     * @return Api\Song
-     */
-    public function api(\App\ApiUtilities $api_utils, UriInterface $base_url = null): Api\Song
-    {
-        $response = new Api\Song;
-        $response->id = (string)$this->id;
-        $response->text = (string)$this->text;
-        $response->artist = (string)$this->artist;
-        $response->title = (string)$this->title;
-        $response->art = $api_utils->getDefaultAlbumArtUrl($base_url);
-
-        $response->custom_fields = $api_utils->getCustomFields();
-
-        return $response;
-    }
-
-    /**
      * @param array|object|string $song_info
+     *
      * @return string
      */
     public static function getSongHash($song_info): string
@@ -215,6 +120,12 @@ class Song
                 'text' => $song_info->getText(),
                 'artist' => $song_info->getArtist(),
                 'title' => $song_info->getTitle(),
+            ];
+        } elseif ($song_info instanceof CurrentSong) {
+            $song_info = [
+                'text' => $song_info->text,
+                'artist' => $song_info->artist,
+                'title' => $song_info->title,
             ];
         } elseif (!is_array($song_info)) {
             $song_info = [
@@ -236,5 +147,85 @@ class Song
         $hash_base = mb_strtolower(str_replace([' ', '-'], ['', ''], $song_text), 'UTF-8');
 
         return md5($hash_base);
+    }
+
+    public function getText(): ?string
+    {
+        return $this->text;
+    }
+
+    public function getArtist(): ?string
+    {
+        return $this->artist;
+    }
+
+    public function getTitle(): ?string
+    {
+        return $this->title;
+    }
+
+    public function getId(): string
+    {
+        return $this->id;
+    }
+
+    public function getCreated(): int
+    {
+        return $this->created;
+    }
+
+    public function getPlayCount(): int
+    {
+        return $this->play_count;
+    }
+
+    public function getLastPlayed(): int
+    {
+        return $this->last_played;
+    }
+
+    /**
+     * Increment the play counter and last-played items.
+     */
+    public function played(): void
+    {
+        ++$this->play_count;
+        $this->last_played = time();
+    }
+
+    public function getHistory(): Collection
+    {
+        return $this->history;
+    }
+
+    public function __toString(): string
+    {
+        return 'Song ' . $this->id . ': ' . $this->artist . ' - ' . $this->title;
+    }
+
+    /**
+     * Retrieve the API version of the object/array.
+     *
+     * @param ApiUtilities $api_utils
+     * @param Station|null $station
+     * @param UriInterface|null $base_url
+     *
+     * @return Api\Song
+     */
+    public function api(
+        ApiUtilities $api_utils,
+        ?Station $station = null,
+        ?UriInterface $base_url = null
+    ): Api\Song {
+        $response = new Api\Song;
+        $response->id = (string)$this->id;
+        $response->text = (string)$this->text;
+        $response->artist = (string)$this->artist;
+        $response->title = (string)$this->title;
+        $response->art = $api_utils->getDefaultAlbumArtUrl($station, $base_url);
+
+        $response->custom_fields = $api_utils->getCustomFields();
+
+        return $response;
     }
 }

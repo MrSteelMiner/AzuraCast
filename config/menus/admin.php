@@ -5,7 +5,7 @@
 
 use App\Acl;
 
-return function(\App\Event\BuildAdminMenu $e) {
+return function (App\Event\BuildAdminMenu $e) {
     $router = $e->getRouter();
 
     $e->merge([
@@ -33,16 +33,16 @@ return function(\App\Event\BuildAdminMenu $e) {
                     'url' => $router->named('admin:logs:index'),
                     'permission' => Acl::GLOBAL_LOGS,
                 ],
-                'auditlog' => [
-                    'label' => __('Audit Log'),
-                    'url' => $router->named('admin:auditlog:index'),
-                    'permission' => Acl::GLOBAL_LOGS,
-                ],
                 'backups' => [
                     'label' => __('Backups'),
                     'url' => $router->named('admin:backups:index'),
                     'permission' => Acl::GLOBAL_BACKUPS,
-                ]
+                ],
+                'debug' => [
+                    'label' => __('System Debugger'),
+                    'url' => $router->named('admin:debug:index'),
+                    'permission' => Acl::GLOBAL_ALL,
+                ],
             ],
         ],
         'users' => [
@@ -58,6 +58,11 @@ return function(\App\Event\BuildAdminMenu $e) {
                     'label' => __('Permissions'),
                     'url' => $router->named('admin:permissions:index'),
                     'permission' => Acl::GLOBAL_PERMISSIONS,
+                ],
+                'auditlog' => [
+                    'label' => __('Audit Log'),
+                    'url' => $router->named('admin:auditlog:index'),
+                    'permission' => Acl::GLOBAL_LOGS,
                 ],
             ],
         ],
@@ -82,10 +87,15 @@ return function(\App\Event\BuildAdminMenu $e) {
                 ],
                 'shoutcast' => [
                     'label' => __('Install SHOUTcast'),
-                    'url' => $router->named('admin:install:shoutcast'),
+                    'url' => $router->named('admin:install_shoutcast:index'),
+                    'permission' => Acl::GLOBAL_ALL,
+                ],
+                'geolite' => [
+                    'label' => __('Install GeoLite IP Database'),
+                    'url' => $router->named('admin:install_geolite:index'),
                     'permission' => Acl::GLOBAL_ALL,
                 ],
             ],
-        ]
+        ],
     ]);
 };

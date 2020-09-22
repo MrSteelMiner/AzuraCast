@@ -2,27 +2,22 @@
 namespace App\Controller\Api\Stations;
 
 use App\Entity;
+use App\Exception;
+use App\Exception\NotFoundException;
 use App\Http\Response;
 use App\Http\ServerRequest;
 use App\Radio\Adapters;
-use Doctrine\ORM\EntityManager;
+use Doctrine\ORM\EntityManagerInterface;
 use OpenApi\Annotations as OA;
 use Psr\Http\Message\ResponseInterface;
 
 class IndexController
 {
-    /** @var EntityManager */
-    protected $em;
+    protected EntityManagerInterface $em;
 
-    /** @var Adapters */
-    protected $adapters;
+    protected Adapters $adapters;
 
-    /**
-     * StationsController constructor.
-     * @param EntityManager $em
-     * @param Adapters $adapters
-     */
-    public function __construct(EntityManager $em, Adapters $adapters)
+    public function __construct(EntityManagerInterface $em, Adapters $adapters)
     {
         $this->em = $em;
         $this->adapters = $adapters;
@@ -39,6 +34,12 @@ class IndexController
      *     )
      *   )
      * )
+     * @param ServerRequest $request
+     * @param Response $response
+     *
+     * @return ResponseInterface
+     * @throws NotFoundException
+     * @throws Exception
      */
     public function listAction(ServerRequest $request, Response $response): ResponseInterface
     {
@@ -73,12 +74,23 @@ class IndexController
      *   ),
      *   @OA\Response(response=404, description="Station not found")
      * )
+     * @param ServerRequest $request
+     * @param Response $response
+     *
+     * @return ResponseInterface
+     * @throws Exception
      */
     public function indexAction(ServerRequest $request, Response $response): ResponseInterface
     {
-        $api_response = $request->getStation()->api($request->getStationFrontend());
-        $api_response->resolveUrls($request->getRouter()->getBaseUrl());
+        $station = $request->getStation();
 
-        return $response->withJson($api_response);
+        $apiResponse = $station->api(
+            $request->getStationFrontend(),
+            $request->getStationRemotes(),
+            null
+        );
+        $apiResponse->resolveUrls($request->getRouter()->getBaseUrl());
+
+        return $response->withJson($apiResponse);
     }
 }

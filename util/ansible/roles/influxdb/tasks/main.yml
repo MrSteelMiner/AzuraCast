@@ -14,12 +14,8 @@
 
 - name: Update apt cache
   apt: update_cache=yes
-  when: influxdb_list.changed == True or influxdb_key.changed == True
-
-- name: Install python-influxdb
-  pip:
-    name: influxdb
-    state: latest
+  when:
+    - influxdb_list.changed == True or influxdb_key.changed == True
 
 - name: Install InfluxDB
   apt:

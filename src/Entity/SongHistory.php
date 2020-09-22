@@ -1,14 +1,16 @@
 <?php
 namespace App\Entity;
 
+use App\ApiUtilities;
 use Doctrine\ORM\Mapping as ORM;
 use Psr\Http\Message\UriInterface;
 
 /**
  * @ORM\Table(name="song_history", indexes={
- *   @ORM\Index(name="history_idx", columns={"timestamp_start","timestamp_end","listeners_start"}),
+ *     @ORM\Index(name="idx_timestamp_start", columns={"timestamp_start"}),
+ *     @ORM\Index(name="idx_timestamp_end", columns={"timestamp_end"})
  * })
- * @ORM\Entity(repositoryClass="App\Entity\Repository\SongHistoryRepository")
+ * @ORM\Entity()
  */
 class SongHistory
 {
@@ -74,6 +76,21 @@ class SongHistory
     protected $playlist;
 
     /**
+     * @ORM\Column(name="streamer_id", type="integer", nullable=true)
+     * @var int|null
+     */
+    protected $streamer_id;
+
+    /**
+     * @ORM\ManyToOne(targetEntity="StationStreamer")
+     * @ORM\JoinColumns({
+     *   @ORM\JoinColumn(name="streamer_id", referencedColumnName="id", onDelete="CASCADE")
+     * })
+     * @var StationStreamer|null
+     */
+    protected $streamer;
+
+    /**
      * @ORM\Column(name="media_id", type="integer", nullable=true)
      * @var int|null
      */
@@ -95,31 +112,13 @@ class SongHistory
     protected $request_id;
 
     /**
-     * @ORM\OneToOne(targetEntity="StationRequest")
+     * @ORM\ManyToOne(targetEntity="StationRequest")
      * @ORM\JoinColumns({
      *   @ORM\JoinColumn(name="request_id", referencedColumnName="id", onDelete="CASCADE")
      * })
      * @var StationRequest|null
      */
     protected $request;
-
-    /**
-     * @ORM\Column(name="autodj_custom_uri", type="string", length=255, nullable=true)
-     * @var string|null
-     */
-    protected $autodj_custom_uri;
-
-    /**
-     * @ORM\Column(name="timestamp_cued", type="integer", nullable=true)
-     * @var int|null
-     */
-    protected $timestamp_cued;
-
-    /**
-     * @ORM\Column(name="sent_to_autodj", type="boolean")
-     * @var bool
-     */
-    protected $sent_to_autodj;
 
     /**
      * @ORM\Column(name="timestamp_start", type="integer")
@@ -176,7 +175,7 @@ class SongHistory
     protected $delta_negative;
 
     /**
-     * @ORM\Column(name="delta_points", type="json_array", nullable=true)
+     * @ORM\Column(name="delta_points", type="json", nullable=true)
      * @var mixed|null
      */
     protected $delta_points;
@@ -185,9 +184,6 @@ class SongHistory
     {
         $this->song = $song;
         $this->station = $station;
-
-        $this->sent_to_autodj = false;
-        $this->timestamp_cued = 0;
 
         $this->timestamp_start = 0;
         $this->listeners_start = 0;
@@ -202,57 +198,46 @@ class SongHistory
         $this->delta_positive = 0;
     }
 
-    /**
-     * @return int
-     */
     public function getId(): int
     {
         return $this->id;
     }
 
-    /**
-     * @return Song
-     */
     public function getSong(): Song
     {
         return $this->song;
     }
 
-    /**
-     * @return Station
-     */
     public function getStation(): Station
     {
         return $this->station;
     }
 
-    /**
-     * @return StationPlaylist|null
-     */
     public function getPlaylist(): ?StationPlaylist
     {
         return $this->playlist;
     }
 
-    /**
-     * @param StationPlaylist|null $playlist
-     */
     public function setPlaylist(StationPlaylist $playlist = null): void
     {
         $this->playlist = $playlist;
     }
 
-    /**
-     * @return StationMedia|null
-     */
+    public function getStreamer(): ?StationStreamer
+    {
+        return $this->streamer;
+    }
+
+    public function setStreamer(?StationStreamer $streamer): void
+    {
+        $this->streamer = $streamer;
+    }
+
     public function getMedia(): ?StationMedia
     {
         return $this->media;
     }
 
-    /**
-     * @param StationMedia|null $media
-     */
     public function setMedia(StationMedia $media = null): void
     {
         $this->media = $media;
@@ -262,238 +247,125 @@ class SongHistory
         }
     }
 
-    /**
-     * @return StationRequest|null
-     */
     public function getRequest(): ?StationRequest
     {
         return $this->request;
     }
 
-    /**
-     * @param StationRequest|null $request
-     */
     public function setRequest($request): void
     {
         $this->request = $request;
     }
 
-    /**
-     * @return string|null
-     */
-    public function getAutodjCustomUri(): ?string
-    {
-        return $this->autodj_custom_uri;
-    }
-
-    /**
-     * @param string|null $autodj_custom_uri
-     */
-    public function setAutodjCustomUri(?string $autodj_custom_uri): void
-    {
-        $this->autodj_custom_uri = $autodj_custom_uri;
-    }
-
-    /**
-     * @return int|null
-     */
-    public function getTimestampCued(): ?int
-    {
-        return $this->timestamp_cued;
-    }
-
-    /**
-     * @param int|null $timestamp_cued
-     */
-    public function setTimestampCued($timestamp_cued): void
-    {
-        $this->timestamp_cued = $timestamp_cued;
-    }
-
-    /**
-     * @return bool
-     */
-    public function getSentToAutodj(): bool
-    {
-        return $this->sent_to_autodj;
-    }
-
-    public function sentToAutodj(): void
-    {
-        $this->sent_to_autodj = true;
-    }
-
-    /**
-     * @return int
-     */
     public function getTimestampStart(): int
     {
         return $this->timestamp_start;
     }
 
-    /**
-     * @param int $timestamp_start
-     */
     public function setTimestampStart(int $timestamp_start): void
     {
         $this->timestamp_start = $timestamp_start;
     }
 
-    /**
-     * @return int|null
-     */
     public function getDuration(): ?int
     {
         return $this->duration;
     }
 
-    /**
-     * @param int|null $duration
-     */
     public function setDuration($duration): void
     {
         $this->duration = $duration;
     }
 
-    /**
-     * @return int|null
-     */
     public function getListenersStart(): ?int
     {
         return $this->listeners_start;
     }
 
-    /**
-     * @param int|null $listeners_start
-     */
     public function setListenersStart($listeners_start): void
     {
         $this->listeners_start = $listeners_start;
     }
 
-    /**
-     * @return int
-     */
     public function getTimestampEnd(): int
     {
         return $this->timestamp_end;
     }
 
-    /**
-     * @param int $timestamp_end
-     */
     public function setTimestampEnd(int $timestamp_end): void
     {
         $this->timestamp_end = $timestamp_end;
+
+        if (!$this->duration) {
+            $this->duration = $timestamp_end - $this->timestamp_start;
+        }
     }
 
-    /**
-     * @return int
-     */
     public function getTimestamp(): int
     {
         return (int)$this->timestamp_start;
     }
 
-    /**
-     * @return int|null
-     */
     public function getListenersEnd(): ?int
     {
         return $this->listeners_end;
     }
 
-    /**
-     * @param int|null $listeners_end
-     */
     public function setListenersEnd($listeners_end): void
     {
         $this->listeners_end = $listeners_end;
     }
 
-    /**
-     * @return int|null
-     */
     public function getUniqueListeners(): ?int
     {
         return $this->unique_listeners;
     }
 
-    /**
-     * @param int|null $unique_listeners
-     */
     public function setUniqueListeners($unique_listeners): void
     {
         $this->unique_listeners = $unique_listeners;
     }
 
-    /**
-     * @return int
-     */
     public function getListeners(): int
     {
         return (int)$this->listeners_start;
     }
 
-    /**
-     * @return int
-     */
     public function getDeltaTotal(): int
     {
         return $this->delta_total;
     }
 
-    /**
-     * @param int $delta_total
-     */
     public function setDeltaTotal(int $delta_total): void
     {
         $this->delta_total = $this->_truncateSmallInt($delta_total);
     }
 
-    /**
-     * @return int
-     */
     public function getDeltaPositive(): int
     {
         return $this->delta_positive;
     }
 
-    /**
-     * @param int $delta_positive
-     */
     public function setDeltaPositive(int $delta_positive): void
     {
         $this->delta_positive = $this->_truncateSmallInt($delta_positive);
     }
 
-    /**
-     * @return int
-     */
     public function getDeltaNegative(): int
     {
         return $this->delta_negative;
     }
 
-    /**
-     * @param int $delta_negative
-     */
     public function setDeltaNegative(int $delta_negative): void
     {
         $this->delta_negative = $this->_truncateSmallInt($delta_negative);
     }
 
-    /**
-     * @return mixed|null
-     */
     public function getDeltaPoints()
     {
         return $this->delta_points;
     }
 
-    /**
-     * @param mixed $delta_point
-     */
     public function addDeltaPoint($delta_point): void
     {
         $delta_points = (array)$this->delta_points;
@@ -513,12 +385,15 @@ class SongHistory
     }
 
     /**
-     * @param Api\SongHistory $response
-     * @param \App\ApiUtilities $api
+     * @template T of Api\SongHistory
+     *
+     * @param T $response
+     * @param ApiUtilities $api
      * @param UriInterface|null $base_url
-     * @return Api\SongHistory
+     *
+     * @return T
      */
-    public function api(Api\SongHistory $response, \App\ApiUtilities $api, UriInterface $base_url = null)
+    public function api(Api\SongHistory $response, ApiUtilities $api, UriInterface $base_url = null)
     {
         $response->sh_id = (int)$this->id;
 
@@ -535,21 +410,40 @@ class SongHistory
             $response->playlist = '';
         }
 
+        if ($this->streamer instanceof StationStreamer) {
+            $response->streamer = $this->streamer->getDisplayName();
+        } else {
+            $response->streamer = '';
+        }
+
         if ($response instanceof Api\DetailedSongHistory) {
             $response->listeners_start = (int)$this->listeners_start;
             $response->listeners_end = (int)$this->listeners_end;
             $response->delta_total = (int)$this->delta_total;
         }
 
-        if ($response instanceof Api\QueuedSong) {
-            $response->cued_at = (int)$this->timestamp_cued;
-            $response->autodj_custom_uri = $this->autodj_custom_uri;
-        }
-
         $response->song = ($this->media)
             ? $this->media->api($api, $base_url)
-            : $this->song->api($api, $base_url);
+            : $this->song->api($api, $this->station, $base_url);
 
         return $response;
+    }
+
+    public function __toString()
+    {
+        return (null !== $this->media)
+            ? (string)$this->media
+            : (string)$this->song;
+    }
+
+    public static function fromQueue(StationQueue $queue): self
+    {
+        $sh = new self($queue->getSong(), $queue->getStation());
+        $sh->setMedia($queue->getMedia());
+        $sh->setRequest($queue->getRequest());
+        $sh->setPlaylist($queue->getPlaylist());
+        $sh->setDuration($queue->getDuration());
+
+        return $sh;
     }
 }

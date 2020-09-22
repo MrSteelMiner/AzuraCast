@@ -6,21 +6,27 @@ use Symfony\Contracts\EventDispatcher\Event;
 
 class WriteLiquidsoapConfiguration extends Event
 {
-    /** @var array */
-    protected $config_lines;
+    protected array $configLines;
 
-    /** @var Station */
-    protected $station;
+    protected Station $station;
 
-    public function __construct(Station $station)
+    protected bool $forEditing;
+
+    public function __construct(Station $station, bool $forEditing = false)
     {
         $this->station = $station;
-        $this->config_lines = [];
+        $this->configLines = [];
+        $this->forEditing = $forEditing;
     }
 
     public function getStation(): Station
     {
         return $this->station;
+    }
+
+    public function isForEditing(): bool
+    {
+        return $this->forEditing;
     }
 
     /**
@@ -30,7 +36,12 @@ class WriteLiquidsoapConfiguration extends Event
      */
     public function appendLines(array $lines): void
     {
-        $this->config_lines = array_merge($this->config_lines, [''], $lines);
+        $this->configLines = array_merge($this->configLines, [''], $lines);
+    }
+
+    public function appendBlock(string $lines): void
+    {
+        $this->appendLines(explode("\n", $lines));
     }
 
     /**
@@ -40,7 +51,7 @@ class WriteLiquidsoapConfiguration extends Event
      */
     public function prependLines(array $lines): void
     {
-        $this->config_lines = array_merge($lines, [''], $this->config_lines);
+        $this->configLines = array_merge($lines, [''], $this->configLines);
     }
 
     /**
@@ -50,6 +61,6 @@ class WriteLiquidsoapConfiguration extends Event
      */
     public function buildConfiguration(): string
     {
-        return implode("\n", $this->config_lines);
+        return implode("\n", $this->configLines);
     }
 }

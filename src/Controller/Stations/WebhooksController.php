@@ -5,30 +5,23 @@ use App\Entity;
 use App\Form\StationWebhookForm;
 use App\Http\Response;
 use App\Http\ServerRequest;
+use App\Session\Flash;
 use App\Webhook\Dispatcher;
 use Psr\Http\Message\ResponseInterface;
 
 class WebhooksController extends AbstractStationCrudController
 {
-    /** @var Dispatcher */
-    protected $dispatcher;
+    protected Dispatcher $dispatcher;
 
-    /** @var array */
-    protected $webhook_config;
+    protected array $webhook_config;
 
-    /**
-     * @param StationWebhookForm $form
-     * @param Dispatcher $dispatcher
-     */
     public function __construct(
         StationWebhookForm $form,
         Dispatcher $dispatcher
     ) {
         parent::__construct($form);
 
-        if ($form instanceof StationWebhookForm) {
-            $this->webhook_config = $form->getConfig();
-        }
+        $this->webhook_config = $form->getConfig();
 
         $this->csrf_namespace = 'stations_webhooks';
         $this->dispatcher = $dispatcher;
@@ -41,16 +34,16 @@ class WebhooksController extends AbstractStationCrudController
         return $request->getView()->renderToResponse($response, 'stations/webhooks/index', [
             'webhooks' => $station->getWebhooks(),
             'webhook_config' => $this->webhook_config,
-            'csrf' => $request->getSession()->getCsrf()->generate($this->csrf_namespace),
+            'csrf' => $request->getCsrf()->generate($this->csrf_namespace),
         ]);
     }
 
-    public function addAction(ServerRequest $request, Response $response, $station_id, $type = null): ResponseInterface
+    public function addAction(ServerRequest $request, Response $response, $type = null): ResponseInterface
     {
         $view = $request->getView();
         if ($type === null) {
             return $view->renderToResponse($response, 'stations/webhooks/add', [
-                'connectors' => array_filter($this->webhook_config['webhooks'], function($webhook) {
+                'connectors' => array_filter($this->webhook_config['webhooks'], function ($webhook) {
                     return !empty($webhook['name']);
                 }),
             ]);
@@ -59,34 +52,38 @@ class WebhooksController extends AbstractStationCrudController
         $record = new Entity\StationWebhook($request->getStation(), $type);
 
         if (false !== $this->form->process($request, $record)) {
-            $request->getSession()->flash('<b>' . __('Web Hook added.') . '</b>', 'green');
+            $request->getFlash()->addMessage('<b>' . __('Web Hook added.') . '</b>', Flash::SUCCESS);
             return $response->withRedirect($request->getRouter()->fromHere('stations:webhooks:index'));
         }
 
         return $view->renderToResponse($response, 'system/form_page', [
             'form' => $this->form,
             'render_mode' => 'edit',
-            'title' => __('Add Web Hook')
+            'title' => __('Add Web Hook'),
         ]);
     }
 
-    public function editAction(ServerRequest $request, Response $response, $station_id, $id): ResponseInterface
+    public function editAction(ServerRequest $request, Response $response, $id): ResponseInterface
     {
         if (false !== $this->_doEdit($request, $id)) {
-            $request->getSession()->flash('<b>' . __('Web Hook updated.') . '</b>', 'green');
+            $request->getFlash()->addMessage('<b>' . __('Web Hook updated.') . '</b>', Flash::SUCCESS);
             return $response->withRedirect($request->getRouter()->fromHere('stations:webhooks:index'));
         }
 
         return $request->getView()->renderToResponse($response, 'system/form_page', [
             'form' => $this->form,
             'render_mode' => 'edit',
-            'title' => __('Edit Web Hook')
+            'title' => __('Edit Web Hook'),
         ]);
     }
 
-    public function toggleAction(ServerRequest $request, Response $response, $station_id, $id, $csrf_token): ResponseInterface
-    {
-        $request->getSession()->getCsrf()->verify($csrf_token, $this->csrf_namespace);
+    public function toggleAction(
+        ServerRequest $request,
+        Response $response,
+        $id,
+        $csrf
+    ): ResponseInterface {
+        $request->getCsrf()->verify($csrf, $this->csrf_namespace);
 
         /** @var Entity\StationWebhook $record */
         $record = $this->_getRecord($request->getStation(), $id);
@@ -96,13 +93,18 @@ class WebhooksController extends AbstractStationCrudController
         $this->em->persist($record);
         $this->em->flush();
 
-        $request->getSession()->flash('<b>' . ($new_status ? __('Web hook enabled.') : __('Web Hook disabled.')) . '</b>', 'green');
+        $request->getFlash()->addMessage('<b>' . ($new_status ? __('Web hook enabled.') : __('Web Hook disabled.')) . '</b>',
+            Flash::SUCCESS);
         return $response->withRedirect($request->getRouter()->fromHere('stations:webhooks:index'));
     }
 
-    public function testAction(ServerRequest $request, Response $response, $station_id, $id, $csrf_token): ResponseInterface
-    {
-        $request->getSession()->getCsrf()->verify($csrf_token, $this->csrf_namespace);
+    public function testAction(
+        ServerRequest $request,
+        Response $response,
+        $id,
+        $csrf
+    ): ResponseInterface {
+        $request->getCsrf()->verify($csrf, $this->csrf_namespace);
 
         $station = $request->getStation();
 
@@ -118,11 +120,15 @@ class WebhooksController extends AbstractStationCrudController
         ]);
     }
 
-    public function deleteAction(ServerRequest $request, Response $response, $station_id, $id, $csrf_token): ResponseInterface
-    {
-        $this->_doDelete($request, $id, $csrf_token);
+    public function deleteAction(
+        ServerRequest $request,
+        Response $response,
+        $id,
+        $csrf
+    ): ResponseInterface {
+        $this->_doDelete($request, $id, $csrf);
 
-        $request->getSession()->flash('<b>' . __('Web Hook deleted.') . '</b>', 'green');
+        $request->getFlash()->addMessage('<b>' . __('Web Hook deleted.') . '</b>', Flash::SUCCESS);
 
         return $response->withRedirect($request->getRouter()->fromHere('stations:webhooks:index'));
     }

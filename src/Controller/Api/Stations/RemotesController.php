@@ -3,12 +3,13 @@ namespace App\Controller\Api\Stations;
 
 use App\Entity;
 use App\Entity\StationRemote;
+use App\Exception\PermissionDeniedException;
 use OpenApi\Annotations as OA;
 
 class RemotesController extends AbstractStationApiCrudController
 {
-    protected $entityClass = Entity\StationRemote::class;
-    protected $resourceRouteName = 'api:stations:remote';
+    protected string $entityClass = Entity\StationRemote::class;
+    protected string $resourceRouteName = 'api:stations:remote';
 
     /**
      * @OA\Get(path="/station/{station_id}/remotes",
@@ -97,12 +98,12 @@ class RemotesController extends AbstractStationApiCrudController
     /**
      * @inheritDoc
      */
-    protected function _getRecord(Entity\Station $station, $record_id)
+    protected function getRecord(Entity\Station $station, $id)
     {
-        $record = parent::_getRecord($station, $record_id);
+        $record = parent::getRecord($station, $id);
 
         if ($record instanceof StationRemote && !$record->isEditable()) {
-            throw new \App\Exception\PermissionDenied('This record cannot be edited.');
+            throw new PermissionDeniedException('This record cannot be edited.');
         }
 
         return $record;

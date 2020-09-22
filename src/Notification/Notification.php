@@ -1,31 +1,22 @@
 <?php
 namespace App\Notification;
 
-use Azura\Session\Flash;
+use App\Session\Flash;
 
 class Notification
 {
     // Alert type constants.
-    const SUCCESS   = Flash::SUCCESS;
-    const WARNING   = Flash::WARNING;
-    const ERROR     = Flash::ERROR;
-    const INFO      = Flash::INFO;
+    public const SUCCESS = Flash::SUCCESS;
+    public const WARNING = Flash::WARNING;
+    public const ERROR = Flash::ERROR;
+    public const INFO = Flash::INFO;
 
-    /** @var string */
-    protected $title;
+    protected string $title;
 
-    /** @var string */
-    protected $body;
+    protected string $body;
 
-    /** @var string */
-    protected $type;
+    protected string $type;
 
-    /**
-     * Notification constructor.
-     * @param string $title
-     * @param string $body
-     * @param string $type
-     */
     public function __construct(string $title, string $body, string $type)
     {
         $this->title = $title;
@@ -33,25 +24,16 @@ class Notification
         $this->type = $type;
     }
 
-    /**
-     * @return string
-     */
     public function getTitle(): string
     {
         return $this->title;
     }
 
-    /**
-     * @return string
-     */
     public function getBody(): string
     {
         return $this->body;
     }
 
-    /**
-     * @return string
-     */
     public function getType(): string
     {
         return $this->type;

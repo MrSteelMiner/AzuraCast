@@ -1,8 +1,9 @@
 <?php
 namespace App\Entity\Repository;
 
+use App\Doctrine\Repository;
 use App\Entity;
-use Azura\Doctrine\Repository;
+use InvalidArgumentException;
 
 class ApiKeyRepository extends Repository
 {
@@ -10,13 +11,18 @@ class ApiKeyRepository extends Repository
      * Given an API key string in the format `identifier:verifier`, find and authenticate an API key.
      *
      * @param string $key_string
+     *
      * @return Entity\User|null
      */
-    public function authenticate($key_string): ?Entity\User
+    public function authenticate(string $key_string): ?Entity\User
     {
-        list($key_identifier, $key_verifier) = explode(':', $key_string);
+        [$key_identifier, $key_verifier] = explode(':', $key_string);
 
-        $api_key = $this->find($key_identifier);
+        if (empty($key_identifier) || empty($key_verifier)) {
+            throw new InvalidArgumentException('API key is not in a valid format.');
+        }
+
+        $api_key = $this->repository->find($key_identifier);
 
         if ($api_key instanceof Entity\ApiKey) {
             return ($api_key->verify($key_verifier))

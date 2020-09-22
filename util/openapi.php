@@ -1,4 +1,5 @@
 <?php
+
 use OpenApi\Annotations as OA;
 
 /**
@@ -30,7 +31,7 @@ use OpenApi\Annotations as OA;
  *     in="path",
  *     required=true,
  *     @OA\Schema(
- *         type="int64"
+ *         type="integer", format="int64"
  *     )
  * )
  *
@@ -50,6 +51,7 @@ use OpenApi\Annotations as OA;
  *
  * @OA\Tag(name="Stations: History")
  * @OA\Tag(name="Stations: Listeners")
+ * @OA\Tag(name="Stations: Schedules")
  * @OA\Tag(name="Stations: Media")
  * @OA\Tag(name="Stations: Mount Points")
  * @OA\Tag(name="Stations: Playlists")

@@ -4,35 +4,33 @@ namespace App\Controller\Api\Admin;
 use App\Entity;
 use App\Http\Response;
 use App\Http\ServerRequest;
-use Azura\Doctrine\Paginator;
-use Cake\Chronos\Chronos;
-use Doctrine\ORM\EntityManager;
+use App\Paginator\QueryPaginator;
+use Carbon\CarbonImmutable;
+use DateTimeZone;
+use Doctrine\ORM\EntityManagerInterface;
 use Psr\Http\Message\ResponseInterface;
+use const JSON_PRETTY_PRINT;
 
 class AuditLogController
 {
-    /** @var EntityManager */
-    protected $em;
+    protected EntityManagerInterface $em;
 
-    /**
-     * @param EntityManager $em
-     */
-    public function __construct(EntityManager $em)
+    public function __construct(EntityManagerInterface $em)
     {
         $this->em = $em;
     }
 
     public function __invoke(ServerRequest $request, Response $response): ResponseInterface
     {
-        $tz = new \DateTimeZone('UTC');
+        $tz = new DateTimeZone('UTC');
 
         $params = $request->getParams();
         if (!empty($params['start'])) {
-            $start = Chronos::parse($params['start'] . ' 00:00:00', $tz);
-            $end = Chronos::parse(($params['end'] ?? $params['start']) . ' 23:59:59', $tz);
+            $start = CarbonImmutable::parse($params['start'] . ' 00:00:00', $tz);
+            $end = CarbonImmutable::parse(($params['end'] ?? $params['start']) . ' 23:59:59', $tz);
         } else {
-            $start = Chronos::parse('-2 weeks', $tz);
-            $end = Chronos::now($tz);
+            $start = CarbonImmutable::parse('-2 weeks', $tz);
+            $end = CarbonImmutable::now($tz);
         }
 
         $qb = $this->em->createQueryBuilder();
@@ -51,8 +49,7 @@ class AuditLogController
 
         $qb->orderBy('a.timestamp', 'DESC');
 
-        $paginator = new Paginator($qb);
-        $paginator->setFromRequest($request);
+        $paginator = new QueryPaginator($qb, $request);
 
         $paginator->setPostprocessor(function (Entity\AuditLog $row) {
             $operations = [
@@ -64,24 +61,24 @@ class AuditLogController
             $changesRaw = $row->getChanges();
             $changes = [];
 
-            foreach($changesRaw as $fieldName => [$fieldPrevious, $fieldNew]) {
+            foreach ($changesRaw as $fieldName => [$fieldPrevious, $fieldNew]) {
                 $changes[] = [
                     'field' => $fieldName,
-                    'from' => json_encode($fieldPrevious, \JSON_PRETTY_PRINT),
-                    'to' => json_encode($fieldNew, \JSON_PRETTY_PRINT),
+                    'from' => json_encode($fieldPrevious, JSON_THROW_ON_ERROR | JSON_PRETTY_PRINT),
+                    'to' => json_encode($fieldNew, JSON_THROW_ON_ERROR | JSON_PRETTY_PRINT),
                 ];
             }
 
             return [
-                'id'        => $row->getId(),
+                'id' => $row->getId(),
                 'timestamp' => $row->getTimestamp(),
                 'operation' => $row->getOperation(),
                 'operation_text' => $operations[$row->getOperation()],
-                'class'     => $row->getClass(),
+                'class' => $row->getClass(),
                 'identifier' => $row->getIdentifier(),
                 'target_class' => $row->getTargetClass(),
-                'target'    => $row->getTarget(),
-                'user'      => $row->getUser(),
+                'target' => $row->getTarget(),
+                'user' => $row->getUser(),
                 'changes' => $changes,
             ];
         });

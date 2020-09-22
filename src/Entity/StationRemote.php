@@ -1,12 +1,15 @@
 <?php
 namespace App\Entity;
 
+use App\Annotations\AuditLog;
 use App\Radio\Adapters;
 use App\Radio\Remote\AbstractRemote;
-use App\Annotations\AuditLog;
+use App\Utilities;
 use Doctrine\ORM\Mapping as ORM;
 use OpenApi\Annotations as OA;
 use Symfony\Component\Validator\Constraints as Assert;
+use const PHP_URL_HOST;
+use const PHP_URL_PORT;
 
 /**
  * @ORM\Table(name="station_remotes")
@@ -144,6 +147,15 @@ class StationRemote implements StationMountInterface
     protected $mount;
 
     /**
+     * @ORM\Column(name="admin_password", type="string", length=100, nullable=true)
+     *
+     * @OA\Property(example="password")
+     *
+     * @var string|null
+     */
+    protected $admin_password;
+
+    /**
      * @ORM\Column(name="source_port", type="smallint", nullable=true, options={"unsigned"=true})
      *
      * @OA\Property(example=8000)
@@ -211,274 +223,90 @@ class StationRemote implements StationMountInterface
         $this->station = $station;
     }
 
-    /**
-     * @return int
-     */
     public function getId(): int
     {
         return $this->id;
     }
 
-    /**
-     * @return Station
-     */
     public function getStation(): Station
     {
         return $this->station;
     }
 
-    /**
-     * @return Relay|null
-     */
     public function getRelay(): ?Relay
     {
         return $this->relay;
     }
 
-    /**
-     * @param Relay|null $relay
-     */
     public function setRelay(?Relay $relay): void
     {
         $this->relay = $relay;
     }
 
-    /**
-     * @AuditLog\AuditIdentifier
-     *
-     * @return string
-     */
-    public function getDisplayName(): string
-    {
-        if (!empty($this->display_name)) {
-            return $this->display_name;
-        }
-
-        if ($this->enable_autodj) {
-            return $this->autodj_bitrate.'kbps '.strtoupper($this->autodj_format);
-        }
-
-        return \App\Utilities::truncateUrl($this->url);
-    }
-
-    /**
-     * @param string|null $display_name
-     */
-    public function setDisplayName(?string $display_name): void
-    {
-        $this->display_name = $this->_truncateString($display_name);
-    }
-
-    /**
-     * @return bool
-     */
     public function isVisibleOnPublicPages(): bool
     {
         return $this->is_visible_on_public_pages;
     }
 
-    /**
-     * @param bool $is_visible_on_public_pages
-     */
     public function setIsVisibleOnPublicPages(bool $is_visible_on_public_pages): void
     {
         $this->is_visible_on_public_pages = $is_visible_on_public_pages;
     }
 
-    /**
-     * @return string
-     */
-    public function getType(): string
-    {
-        return $this->type;
-    }
-
-    /**
-     * @param string $type
-     */
-    public function setType(string $type): void
-    {
-        $this->type = $type;
-    }
-
-    /**
-     * @return null|string
-     */
-    public function getUrl(): ?string
-    {
-        return $this->url;
-    }
-
-    /**
-     * @param null|string $url
-     */
-    public function setUrl(?string $url): void
-    {
-        if (!empty($url)) {
-            if (substr($url, 0, 4) !== 'http') {
-                $url = 'http://'.$url;
-            }
-        }
-
-        $this->url = $this->_truncateString($url);
-    }
-
-    /**
-     * @return null|string
-     */
-    public function getMount(): ?string
-    {
-        return $this->mount;
-    }
-
-    /**
-     * @param null|string $mount
-     */
-    public function setMount(?string $mount): void
-    {
-        $this->mount = $this->_truncateString($mount, 150);
-    }
-
-    /**
-     * @return int|null
-     */
-    public function getSourcePort(): ?int
-    {
-        return $this->source_port;
-    }
-
-    /**
-     * @param int|null $source_port
-     */
-    public function setSourcePort(?int $source_port): void
-    {
-        if ((int)$source_port === 0) {
-            $source_port = null;
-        }
-
-        $this->source_port = $source_port;
-    }
-
-    /**
-     * @return null|string
-     */
-    public function getSourceMount(): ?string
-    {
-        return $this->source_mount;
-    }
-
-    /**
-     * @param null|string $source_mount
-     */
-    public function setSourceMount(?string $source_mount): void
-    {
-        $this->source_mount =  $this->_truncateString($source_mount, 150);
-    }
-
-    /**
-     * @return null|string
-     */
-    public function getSourceUsername(): ?string
-    {
-        return $this->source_username;
-    }
-
-    /**
-     * @param null|string $source_username
-     */
-    public function setSourceUsername(?string $source_username): void
-    {
-        $this->source_username = $this->_truncateString($source_username, 100);
-    }
-
-    /**
-     * @return null|string
-     */
-    public function getSourcePassword(): ?string
-    {
-        return $this->source_password;
-    }
-
-    /**
-     * @param null|string $source_password
-     */
-    public function setSourcePassword(?string $source_password): void
-    {
-        $this->source_password = $this->_truncateString($source_password, 100);
-    }
-
-    /**
-     * @return bool
-     */
     public function getEnableAutodj(): bool
     {
         return $this->enable_autodj;
     }
 
-    /**
-     * @param bool $enable_autodj
-     */
     public function setEnableAutodj(bool $enable_autodj): void
     {
         $this->enable_autodj = $enable_autodj;
     }
 
-    /**
-     * @return null|string
-     */
     public function getAutodjFormat(): ?string
     {
         return $this->autodj_format;
     }
 
-    /**
-     * @param null|string $autodj_format
-     */
     public function setAutodjFormat(string $autodj_format = null): void
     {
         $this->autodj_format = $autodj_format;
     }
 
-    /**
-     * @return int|null
-     */
     public function getAutodjBitrate(): ?int
     {
         return $this->autodj_bitrate;
     }
 
-    /**
-     * @param int|null $autodj_bitrate
-     */
     public function setAutodjBitrate(int $autodj_bitrate = null): void
     {
         $this->autodj_bitrate = $autodj_bitrate;
     }
 
-    /**
-     * @return string|null
-     */
     public function getCustomListenUrl(): ?string
     {
         return $this->custom_listen_url;
     }
 
-    /**
-     * @param null|string $custom_listen_url
-     */
     public function setCustomListenUrl(string $custom_listen_url = null): void
     {
-        $this->custom_listen_url = $this->_truncateString($custom_listen_url, 255);
+        $this->custom_listen_url = $this->truncateString($custom_listen_url, 255);
     }
-
-    /*
-     * StationMountInterface compliance methods
-     */
 
     /** @inheritdoc */
     public function getAutodjUsername(): ?string
     {
         return $this->getSourceUsername();
+    }
+
+    public function getSourceUsername(): ?string
+    {
+        return $this->source_username;
+    }
+
+    public function setSourceUsername(?string $source_username): void
+    {
+        $this->source_username = $this->truncateString($source_username, 100);
     }
 
     /** @inheritdoc */
@@ -493,11 +321,61 @@ class StationRemote implements StationMountInterface
             }
 
             if (!empty($mount)) {
-                $password .= ':#'.$mount;
+                $password .= ':#' . $mount;
             }
         }
 
         return $password;
+    }
+
+    public function getSourcePassword(): ?string
+    {
+        return $this->source_password;
+    }
+
+    public function setSourcePassword(?string $source_password): void
+    {
+        $this->source_password = $this->truncateString($source_password, 100);
+    }
+
+    public function getType(): string
+    {
+        return $this->type;
+    }
+
+    public function setType(string $type): void
+    {
+        $this->type = $type;
+    }
+
+    public function getSourceMount(): ?string
+    {
+        return $this->source_mount;
+    }
+
+    public function setSourceMount(?string $source_mount): void
+    {
+        $this->source_mount = $this->truncateString($source_mount, 150);
+    }
+
+    public function getMount(): ?string
+    {
+        return $this->mount;
+    }
+
+    public function setMount(?string $mount): void
+    {
+        $this->mount = $this->truncateString($mount, 150);
+    }
+
+    public function getAdminPassword(): ?string
+    {
+        return $this->admin_password;
+    }
+
+    public function setAdminPassword(?string $admin_password): void
+    {
+        $this->admin_password = $admin_password;
     }
 
     /** @inheritdoc */
@@ -518,8 +396,26 @@ class StationRemote implements StationMountInterface
     /** @inheritdoc */
     public function getAutodjHost(): ?string
     {
-        return parse_url($this->getUrl(), \PHP_URL_HOST);
+        return parse_url($this->getUrl(), PHP_URL_HOST);
     }
+
+    public function getUrl(): ?string
+    {
+        return $this->url;
+    }
+
+    public function setUrl(?string $url): void
+    {
+        if (!empty($url) && substr($url, 0, 4) !== 'http') {
+            $url = 'http://' . $url;
+        }
+
+        $this->url = $this->truncateString($url);
+    }
+
+    /*
+     * StationMountInterface compliance methods
+     */
 
     /** @inheritdoc */
     public function getAutodjPort(): ?int
@@ -528,58 +424,53 @@ class StationRemote implements StationMountInterface
             return $this->getSourcePort();
         }
 
-        return parse_url($this->getUrl(), \PHP_URL_PORT);
+        return parse_url($this->getUrl(), PHP_URL_PORT);
     }
 
-    /** @inheritdoc */
-    public function getAutodjShoutcastMode(): bool
+    public function getSourcePort(): ?int
     {
-        return (Adapters::REMOTE_ICECAST !== $this->getType());
+        return $this->source_port;
     }
 
-    /**
-     * @return bool
-     */
+    public function setSourcePort(?int $source_port): void
+    {
+        if ((int)$source_port === 0) {
+            $source_port = null;
+        }
+
+        $this->source_port = $source_port;
+    }
+
+    public function getAutodjAdapterType(): string
+    {
+        return $this->getType();
+    }
+
     public function getIsPublic(): bool
     {
         return $this->is_public;
     }
 
-    /**
-     * @param bool $is_public
-     */
     public function setIsPublic(bool $is_public)
     {
         $this->is_public = $is_public;
     }
 
-    /**
-     * @return int
-     */
     public function getListenersUnique(): int
     {
         return $this->listeners_unique;
     }
 
-    /**
-     * @param int $listeners_unique
-     */
     public function setListenersUnique(int $listeners_unique): void
     {
         $this->listeners_unique = $listeners_unique;
     }
 
-    /**
-     * @return int
-     */
     public function getListenersTotal(): int
     {
         return $this->listeners_total;
     }
 
-    /**
-     * @param int $listeners_total
-     */
     public function setListenersTotal(int $listeners_total): void
     {
         $this->listeners_total = $listeners_total;
@@ -597,12 +488,12 @@ class StationRemote implements StationMountInterface
      * Retrieve the API version of the object/array.
      *
      * @param AbstractRemote $adapter
+     *
      * @return Api\StationRemote
      */
     public function api(
         AbstractRemote $adapter
-    ): Api\StationRemote
-    {
+    ): Api\StationRemote {
         $response = new Api\StationRemote;
 
         $response->id = $this->id;
@@ -620,5 +511,31 @@ class StationRemote implements StationMountInterface
         }
 
         return $response;
+    }
+
+    /**
+     * @AuditLog\AuditIdentifier
+     *
+     * @return string
+     */
+    public function getDisplayName(): string
+    {
+        if (!empty($this->display_name)) {
+            return $this->display_name;
+        }
+
+        if ($this->enable_autodj) {
+            return $this->autodj_bitrate . 'kbps ' . strtoupper($this->autodj_format);
+        }
+
+        return Utilities::truncateUrl($this->url);
+    }
+
+    /**
+     * @param string|null $display_name
+     */
+    public function setDisplayName(?string $display_name): void
+    {
+        $this->display_name = $this->truncateString($display_name);
     }
 }

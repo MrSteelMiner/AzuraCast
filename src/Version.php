@@ -1,7 +1,8 @@
 <?php
 namespace App;
 
-use Azura\Settings;
+use DateTime;
+use DateTimeZone;
 use Psr\SimpleCache\CacheInterface;
 use Symfony\Component\Process\Process;
 
@@ -11,16 +12,13 @@ use Symfony\Component\Process\Process;
 class Version
 {
     /** @var string Version that is displayed if no Git repository information is present. */
-    public const FALLBACK_VERSION = '0.9.6.1';
+    public const FALLBACK_VERSION = '0.10.3';
 
-    /** @var CacheInterface */
-    protected $cache;
+    protected CacheInterface $cache;
 
-    /** @var string */
-    protected $repo_dir;
+    protected string $repo_dir;
 
-    /** @var Settings */
-    protected $app_settings;
+    protected Settings $app_settings;
 
     public function __construct(CacheInterface $cache, Settings $app_settings)
     {
@@ -37,36 +35,6 @@ class Version
     {
         $details = $this->getDetails();
         return $details['tag'] ?? self::FALLBACK_VERSION;
-    }
-
-    /**
-     * @return string A textual representation of the current installed version.
-     */
-    public function getVersionText(): string
-    {
-        $details = $this->getDetails();
-
-        return (isset($details['tag']))
-            ? 'v'.$details['tag'].', #'.$details['commit_short'].' ('.$details['commit_date'].')'
-            : 'v'.self::FALLBACK_VERSION.' Release Build';
-    }
-
-    /**
-     * @return string|null The long-form Git hash that represents the current commit of this installation.
-     */
-    public function getCommitHash(): ?string
-    {
-        $details = $this->getDetails();
-        return $details['commit'] ?? null;
-    }
-
-    /**
-     * @return string|null The shortened Git hash corresponding to the current commit.
-     */
-    public function getCommitShort(): ?string
-    {
-        $details = $this->getDetails();
-        return $details['commit_short'] ?? null;
     }
 
     /**
@@ -99,7 +67,7 @@ class Version
      */
     protected function _getRawDetails(): array
     {
-        if (!is_dir($this->repo_dir.'/.git')) {
+        if (!is_dir($this->repo_dir . '/.git')) {
             return [];
         }
 
@@ -115,8 +83,8 @@ class Version
         $latest_commit_date = $this->_runProcess(['git', 'log', '-n1', '--pretty=%ci', 'HEAD']);
 
         if (!empty($latest_commit_date)) {
-            $commit_date = new \DateTime($latest_commit_date);
-            $commit_date->setTimezone(new \DateTimeZone('UTC'));
+            $commit_date = new DateTime($latest_commit_date);
+            $commit_date->setTimezone(new DateTimeZone('UTC'));
 
             $details['commit_timestamp'] = $commit_date->getTimestamp();
             $details['commit_date'] = $commit_date->format('Y-m-d G:i');
@@ -129,26 +97,10 @@ class Version
         if (!empty($last_tagged_commit)) {
             $details['tag'] = $this->_runProcess(['git', 'describe', '--tags', $last_tagged_commit], 'N/A');
         } else {
-            $details['tag'] = 'N/A';
+            $details['tag'] = self::FALLBACK_VERSION;
         }
 
         return $details;
-    }
-
-    /**
-     * Check if the installation has been modified by the user from the release build.
-     *
-     * @return bool
-     */
-    public function isInstallationModified(): bool
-    {
-        // We can't detect if release builds are changed, so always return true.
-        if (!is_dir($this->repo_dir.'/.git')) {
-            return true;
-        }
-
-        $changed_files = $this->_runProcess(['git', 'status', '-s']);
-        return !empty($changed_files);
     }
 
     /**
@@ -156,6 +108,7 @@ class Version
      *
      * @param array $proc
      * @param string $default
+     *
      * @return string
      */
     protected function _runProcess($proc, $default = ''): string
@@ -169,5 +122,64 @@ class Version
         }
 
         return trim($process->getOutput());
+    }
+
+    /**
+     * @return string A textual representation of the current installed version.
+     */
+    public function getVersionText(): string
+    {
+        $details = $this->getDetails();
+
+        if (isset($details['tag'])) {
+            $commitLink = 'https://github.com/AzuraCast/AzuraCast/commit/' . $details['commit'];
+            $commitText = '#<a href="' . $commitLink . '" target="_blank">' . $details['commit_short'] . '</a> (' . $details['commit_date'] . ')';
+
+            if (isset($_ENV['AZURACAST_VERSION'])) {
+                if ('latest' === $_ENV['AZURACAST_VERSION']) {
+                    return 'Rolling Release ' . $commitText;
+                }
+
+                return 'v' . $details['tag'] . ' Stable';
+            }
+
+            return 'v' . $details['tag'] . ', ' . $commitText;
+        }
+
+        return 'v' . self::FALLBACK_VERSION . ' Release Build';
+    }
+
+    /**
+     * @return string|null The long-form Git hash that represents the current commit of this installation.
+     */
+    public function getCommitHash(): ?string
+    {
+        $details = $this->getDetails();
+        return $details['commit'] ?? null;
+    }
+
+    /**
+     * @return string|null The shortened Git hash corresponding to the current commit.
+     */
+    public function getCommitShort(): ?string
+    {
+        $details = $this->getDetails();
+        return $details['commit_short'] ?? null;
+    }
+
+    /**
+     * Check if the installation has been modified by the user from the release build.
+     *
+     * @return bool
+     */
+    public function isInstallationModified(): bool
+    {
+        // We can't detect if release builds are changed, so always return true.
+        if (!is_dir($this->repo_dir . '/.git')) {
+            return true;
+        }
+
+        $changed_files = $this->_runProcess(['git', 'status', '-s']);
+        return !empty($changed_files);
     }
 }

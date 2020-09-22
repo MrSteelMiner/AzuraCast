@@ -1,50 +1,41 @@
 <?php
 namespace App\Middleware;
 
+use App\Assets;
 use App\Entity;
 use App\Http\Response;
-use Azura\App;
-use Azura\Assets;
-use Doctrine\ORM\EntityManager;
 use Psr\Http\Message\ResponseFactoryInterface;
 use Psr\Http\Message\ResponseInterface;
 use Psr\Http\Message\ServerRequestInterface;
 use Psr\Http\Server\MiddlewareInterface;
 use Psr\Http\Server\RequestHandlerInterface;
+use Slim\App;
 
 /**
  * Remove trailing slash from all URLs when routing.
  */
 class EnforceSecurity implements MiddlewareInterface
 {
-    /** @var ResponseFactoryInterface */
-    protected $responseFactory;
+    protected ResponseFactoryInterface $responseFactory;
 
-    /** @var EntityManager */
-    protected $em;
+    protected Entity\Repository\SettingsRepository $settings_repo;
 
-    /** @var Entity\Repository\SettingsRepository */
-    protected $settings_repo;
-
-    /** @var Assets */
-    protected $assets;
+    protected Assets $assets;
 
     public function __construct(
         App $app,
-        EntityManager $em,
+        Entity\Repository\SettingsRepository $settings_repo,
         Assets $assets
     ) {
         $this->responseFactory = $app->getResponseFactory();
-
-        $this->em = $em;
-        $this->settings_repo = $this->em->getRepository(Entity\Settings::class);
-
+        $this->settings_repo = $settings_repo;
         $this->assets = $assets;
     }
 
     /**
      * @param ServerRequestInterface $request
      * @param RequestHandlerInterface $handler
+     *
      * @return ResponseInterface
      */
     public function process(ServerRequestInterface $request, RequestHandlerInterface $handler): ResponseInterface
@@ -58,7 +49,7 @@ class EnforceSecurity implements MiddlewareInterface
 
         if ('https' === $request->getUri()->getScheme()) {
             // Enforce secure cookies.
-            ini_set('session.cookie_secure', 1);
+            ini_set('session.cookie_secure', '1');
 
             $csp[] = 'upgrade-insecure-requests';
 
@@ -85,12 +76,12 @@ class EnforceSecurity implements MiddlewareInterface
         if (($response instanceof Response) && !$response->hasCacheLifetime()) {
             // CSP JavaScript policy
             // Note: unsafe-eval included for Vue template compiling
-            $csp_script_src = (array)$this->assets->getCspDomains();
+            $csp_script_src = $this->assets->getCspDomains();
             $csp_script_src[] = "'self'";
             $csp_script_src[] = "'unsafe-eval'";
-            $csp_script_src[] = "'nonce-".$this->assets->getCspNonce()."'";
+            $csp_script_src[] = "'nonce-" . $this->assets->getCspNonce() . "'";
 
-            $csp[] = "script-src ".implode(' ', $csp_script_src);
+            $csp[] = 'script-src ' . implode(' ', $csp_script_src);
 
             $response = $response->withHeader('Content-Security-Policy', implode('; ', $csp));
         }

@@ -3,14 +3,16 @@ namespace App\Entity;
 
 use App\Annotations\AuditLog;
 use Doctrine\ORM\Mapping as ORM;
+use Exception;
+use JsonSerializable;
 
 /**
  * @ORM\Table(name="api_keys")
- * @ORM\Entity(repositoryClass="App\Entity\Repository\ApiKeyRepository")
+ * @ORM\Entity()
  *
  * @AuditLog\Auditable
  */
-class ApiKey implements \JsonSerializable
+class ApiKey implements JsonSerializable
 {
     public const SEPARATOR = ':';
 
@@ -60,7 +62,7 @@ class ApiKey implements \JsonSerializable
      * @param User $user
      * @param string|null $key An existing API key to import (if one exists).
      */
-    public function __construct(User $user, $key = null)
+    public function __construct(User $user, ?string $key = null)
     {
         $this->user = $user;
 
@@ -73,10 +75,20 @@ class ApiKey implements \JsonSerializable
     }
 
     /**
+     * @param string $original
+     *
+     * @return string The hashed verifier.
+     */
+    protected function hashVerifier(string $original): string
+    {
+        return hash('sha512', $original);
+    }
+
+    /**
      * Generate a unique identifier and return both the identifier and verifier.
      *
      * @return array [identifier, verifier]
-     * @throws \Exception
+     * @throws Exception
      */
     public function generate(): array
     {
@@ -91,9 +103,6 @@ class ApiKey implements \JsonSerializable
         return [$identifier, $verifier];
     }
 
-    /**
-     * @return string
-     */
     public function getId(): string
     {
         return $this->id;
@@ -102,16 +111,15 @@ class ApiKey implements \JsonSerializable
     /**
      * Verify an incoming API key against the verifier on this record.
      *
+     * @param string $verifier
+     *
      * @return bool
      */
-    public function verify($verifier): bool
+    public function verify(string $verifier): bool
     {
         return hash_equals($this->verifier, $this->hashVerifier($verifier));
     }
 
-    /**
-     * @return User
-     */
     public function getUser(): User
     {
         return $this->user;
@@ -119,7 +127,6 @@ class ApiKey implements \JsonSerializable
 
     /**
      * @AuditLog\AuditIdentifier
-     *
      * @return string
      */
     public function getComment(): ?string
@@ -127,12 +134,9 @@ class ApiKey implements \JsonSerializable
         return $this->comment;
     }
 
-    /**
-     * @param string $comment
-     */
     public function setComment(?string $comment): void
     {
-        $this->comment = $this->_truncateString($comment);
+        $this->comment = $this->truncateString($comment);
     }
 
     public function jsonSerialize()
@@ -141,14 +145,5 @@ class ApiKey implements \JsonSerializable
             'id' => $this->id,
             'comment' => $this->comment,
         ];
-    }
-
-    /**
-     * @param string $original
-     * @return string The hashed verifier.
-     */
-    protected function hashVerifier(string $original): string
-    {
-        return hash('sha512', $original);
     }
 }

@@ -1,25 +1,20 @@
 <?php
 namespace App\Controller\Admin;
 
-use App\Controller\Traits\LogViewerTrait;
+use App\Controller\AbstractLogViewerController;
 use App\Entity;
+use App\Exception;
 use App\Http\Response;
 use App\Http\ServerRequest;
-use Azura\Exception;
-use Doctrine\ORM\EntityManager;
+use App\Settings;
+use Doctrine\ORM\EntityManagerInterface;
 use Psr\Http\Message\ResponseInterface;
 
-class LogsController
+class LogsController extends AbstractLogViewerController
 {
-    use LogViewerTrait;
+    protected EntityManagerInterface $em;
 
-    /** @var EntityManager */
-    protected $em;
-
-    /**
-     * @param EntityManager $em
-     */
-    public function __construct(EntityManager $em)
+    public function __construct(EntityManagerInterface $em)
     {
         $this->em = $em;
     }
@@ -29,70 +24,70 @@ class LogsController
         $stations = $this->em->getRepository(Entity\Station::class)->findAll();
         $station_logs = [];
 
-        foreach($stations as $station) {
+        foreach ($stations as $station) {
             /** @var Entity\Station $station */
             $station_logs[$station->getId()] = [
                 'name' => $station->getName(),
-                'logs' => $this->_getStationLogs($station)
+                'logs' => $this->getStationLogs($station),
             ];
         }
 
         return $request->getView()->renderToResponse($response, 'admin/logs/index', [
-            'global_logs' => $this->_getGlobalLogs(),
+            'global_logs' => $this->getGlobalLogs(),
             'station_logs' => $station_logs,
         ]);
     }
 
-    public function viewAction(ServerRequest $request, Response $response, $station_id, $log_key): ResponseInterface
+    protected function getGlobalLogs(): array
     {
-        if ('global' === $station_id) {
-            $log_areas = $this->_getGlobalLogs();
-        } else {
-            $station = $request->getStation();
-            $log_areas = $this->_getStationLogs($station);
-        }
+        $tempDir = Settings::getInstance()->getTempDirectory();
+        $logPaths = [];
 
-        if (!isset($log_areas[$log_key])) {
-            throw new Exception('Invalid log file specified.');
-        }
-
-        $log = $log_areas[$log_key];
-        return $this->_view($request, $response, $log['path'], $log['tail'] ?? true);
-    }
-
-    protected function _getGlobalLogs(): array
-    {
-        $log_paths = [];
-
-        $log_paths['azuracast_log'] = [
+        $logPaths['azuracast_log'] = [
             'name' => __('AzuraCast Application Log'),
-            'path' => APP_INCLUDE_TEMP.'/app.log',
+            'path' => $tempDir . '/app.log',
             'tail' => true,
         ];
 
-        if (!APP_INSIDE_DOCKER) {
-            $log_paths['nginx_access'] = [
+        if (!Settings::getInstance()->isDocker()) {
+            $logPaths['nginx_access'] = [
                 'name' => __('Nginx Access Log'),
-                'path' => APP_INCLUDE_TEMP.'/access.log',
+                'path' => $tempDir . '/access.log',
                 'tail' => true,
             ];
-            $log_paths['nginx_error'] = [
+            $logPaths['nginx_error'] = [
                 'name' => __('Nginx Error Log'),
-                'path' => APP_INCLUDE_TEMP.'/error.log',
+                'path' => $tempDir . '/error.log',
                 'tail' => true,
             ];
-            $log_paths['php'] = [
+            $logPaths['php'] = [
                 'name' => __('PHP Application Log'),
-                'path' => APP_INCLUDE_TEMP.'/php_errors.log',
+                'path' => $tempDir . '/php_errors.log',
                 'tail' => true,
             ];
-            $log_paths['supervisord'] = [
+            $logPaths['supervisord'] = [
                 'name' => __('Supervisord Log'),
-                'path' => APP_INCLUDE_TEMP.'/supervisord.log',
+                'path' => $tempDir . '/supervisord.log',
                 'tail' => true,
             ];
         }
 
-        return $log_paths;
+        return $logPaths;
+    }
+
+    public function viewAction(ServerRequest $request, Response $response, $station_id, $log): ResponseInterface
+    {
+        if ('global' === $station_id) {
+            $log_areas = $this->getGlobalLogs();
+        } else {
+            $log_areas = $this->getStationLogs($request->getStation());
+        }
+
+        if (!isset($log_areas[$log])) {
+            throw new Exception('Invalid log file specified.');
+        }
+
+        $log = $log_areas[$log];
+        return $this->view($request, $response, $log['path'], $log['tail'] ?? true);
     }
 }

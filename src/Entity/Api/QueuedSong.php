@@ -1,5 +1,4 @@
 <?php
-
 namespace App\Entity\Api;
 
 use OpenApi\Annotations as OA;
@@ -15,15 +14,15 @@ class QueuedSong extends SongHistory
      * @OA\Property(example=SAMPLE_TIMESTAMP)
      * @var int
      */
-    public $cued_at;
+    public int $cued_at;
 
     /**
      * Custom AutoDJ playback URI, if it exists.
      *
      * @OA\Property(example="")
-     * @var string
+     * @var string|null
      */
-    public $autodj_custom_uri;
+    public ?string $autodj_custom_uri = null;
 
     /**
      * @OA\Property(
@@ -34,5 +33,5 @@ class QueuedSong extends SongHistory
      * )
      * @var array
      */
-    public $links = [];
+    public array $links = [];
 }

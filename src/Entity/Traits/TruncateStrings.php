@@ -8,9 +8,10 @@ trait TruncateStrings
      *
      * @param null|string $string
      * @param int $length
+     *
      * @return null|string
      */
-    protected function _truncateString(?string $string = null, $length = 255): ?string
+    protected function truncateString(?string $string = null, $length = 255): ?string
     {
         if ($string === null) {
             return null;

@@ -1,4 +1,7 @@
 <?php
+
+use App\Customization;
+use App\Settings;
 use Psr\Http\Message\ServerRequestInterface as Request;
 
 /**
@@ -26,23 +29,58 @@ return [
         'files' => [
             'js' => [
                 [
-                    'src' => 'dist/lib/vue/' . (APP_IN_PRODUCTION ? 'vue.min.js' : 'vue.js'),
+                    'src' => 'dist/lib/vue/' . (Settings::getInstance()->isProduction() ? 'vue.min.js' : 'vue.js'),
                 ],
             ],
         ],
         'inline' => [
             'js' => [
-                'Vue.prototype.$eventHub = new Vue();'
+                'Vue.prototype.$eventHub = new Vue();',
             ],
         ],
     ],
 
-    'vue-i18n' => [
-        'order' => 2,
+    'vue-translations' => [
+        'order' => 4,
         'files' => [
             'js' => [
                 [
-                    'src' => 'dist/lib/vue-i18n/vue-i18n.min.js',
+                    'src' => 'dist/VueTranslations.js',
+                ],
+            ],
+        ],
+        'inline' => [
+            'js' => [
+                function (Request $request) {
+                    return 'VueTranslations.default(App.locale);';
+                },
+            ],
+        ],
+    ],
+
+    'bootstrap-vue' => [
+        'order' => 3,
+        'files' => [
+            'js' => [
+                [
+                    'src' => 'dist/lib/bootstrap-vue/bootstrap-vue.min.js',
+                ],
+            ],
+            'css' => [
+                [
+                    'href' => 'dist/lib/bootstrap-vue/bootstrap-vue.min.css',
+                ],
+            ],
+        ],
+    ],
+
+    'vue-component-common' => [
+        'order' => 3,
+        'require' => ['vue', 'vue-translations'],
+        'files' => [
+            'js' => [
+                [
+                    'src' => 'dist/vendor.js',
                 ],
             ],
         ],
@@ -54,9 +92,9 @@ return [
             'js' => [
                 [
                     'src' => 'dist/lib/lodash/lodash.min.js',
-                ]
-            ]
-        ]
+                ],
+            ],
+        ],
     ],
 
     /*
@@ -80,7 +118,7 @@ return [
                 ],
                 [
                     'src' => 'dist/material.js',
-                ]
+                ],
             ],
             'css' => [
                 [
@@ -89,6 +127,28 @@ return [
                 [
                     'href' => 'dist/lib/material-icons/material-icons.css',
                 ],
+            ],
+        ],
+        'inline' => [
+            'js' => [
+                function (Request $request) {
+                    $locale = $request->getAttribute('locale', Customization::DEFAULT_LOCALE);
+                    $locale = explode('.', $locale)[0];
+                    $localeWithDashes = str_replace('_', '-', $locale);
+
+                    $app = [
+                        'lang' => [
+                            'confirm' => __('Are you sure?'),
+                            'placeholder' => 'Select...',
+                            'no_results' => 'No results found!',
+                            'advanced' => 'Advanced',
+                        ],
+                        'locale' => $locale,
+                        'locale_with_dashes' => $localeWithDashes,
+                    ];
+
+                    return 'let App = ' . json_encode($app) . ';';
+                },
             ],
         ],
     ],
@@ -121,7 +181,7 @@ return [
                     'href' => 'dist/dark.css',
                 ],
             ],
-        ]
+        ],
     ],
     'theme_light' => [
         'order' => 50,
@@ -131,7 +191,7 @@ return [
                     'href' => 'dist/light.css',
                 ],
             ],
-        ]
+        ],
     ],
 
     /*
@@ -150,12 +210,12 @@ return [
         'files' => [
             'css' => [
                 [
-                    'href' => 'js/bootgrid/jquery.bootgrid.min.css',
+                    'href' => 'dist/lib/bootgrid/jquery.bootgrid.min.css',
                 ],
             ],
             'js' => [
                 [
-                    'src' => 'js/bootgrid/jquery.bootgrid.updated.js',
+                    'src' => 'dist/lib/bootgrid/jquery.bootgrid.updated.js',
                 ],
                 [
                     'src' => 'dist/bootgrid.js',
@@ -182,9 +242,9 @@ return [
             'css' => [
                 [
                     'href' => 'dist/lib/chartjs/Chart.min.css',
-                ]
+                ],
             ],
-        ]
+        ],
     ],
 
     'zxcvbn' => [
@@ -216,7 +276,7 @@ return [
                 [
                     'href' => 'dist/lib/chosen/chosen.min.css',
                 ],
-            ]
+            ],
         ],
     ],
 
@@ -226,18 +286,13 @@ return [
             'js' => [
                 [
                     'src' => 'dist/lib/moment/moment.min.js',
-                ]
-            ]
+                ],
+            ],
         ],
         'inline' => [
             'js' => [
-                function(Request $request) {
-                    if ('' !== $request->getAttribute('locale', '')) {
-                        return '';
-                    }
-
-                    $locale = str_replace('_', '-', explode('.', $request->getAttribute('locale'))[0]);
-                    return 'moment.locale('.json_encode($locale).');';
+                function (Request $request) {
+                    return 'moment.locale(App.locale_with_dashes);';
                 },
             ],
         ],
@@ -252,8 +307,8 @@ return [
                 [
                     'src' => 'dist/lib/moment/locales.min.js',
                     'charset' => 'UTF-8',
-                ]
-            ]
+                ],
+            ],
         ],
     ],
 
@@ -264,8 +319,8 @@ return [
             'js' => [
                 [
                     'src' => 'dist/lib/moment-timezone/moment-timezone-with-data-10-year-range.min.js',
-                ]
-            ]
+                ],
+            ],
         ],
     ],
 
@@ -304,9 +359,6 @@ return [
                 [
                     'href' => 'dist/lib/codemirror/codemirror.css',
                 ],
-                [
-                    'href' => 'dist/lib/codemirror/material.css',
-                ],
             ],
         ],
     ],
@@ -335,9 +387,9 @@ return [
                 [
                     'src' => 'dist/lib/dirrty/jquery.dirrty.js',
                     'defer' => true,
-                ]
+                ],
             ],
-        ]
+        ],
     ],
 
     'fancybox' => [
@@ -352,41 +404,8 @@ return [
             'css' => [
                 [
                     'href' => 'dist/lib/fancybox/jquery.fancybox.min.css',
-                ]
-            ],
-        ],
-    ],
-
-    'flowjs' => [
-        'order' => 10,
-        'files' => [
-            'js' => [
-                [
-                    'src' => 'dist/lib/flowjs/flow.min.js',
-                    'defer' => true,
                 ],
             ],
-        ],
-    ],
-
-    'fullcalendar' => [
-        'order' => 10,
-        'require' => ['moment_base', 'moment_timezone'],
-        'replace' => ['moment'],
-        'files' => [
-            'js' => [
-                [
-                    'src' => 'dist/lib/fullcalendar/fullcalendar.min.js',
-                ],
-                [
-                    'src' => 'dist/lib/fullcalendar/locale-all.js',
-                ],
-            ],
-            'css' => [
-                [
-                    'href' => 'dist/lib/fullcalendar/fullcalendar.min.css',
-                ]
-            ]
         ],
     ],
 
@@ -402,18 +421,6 @@ return [
         ],
     ],
 
-    'sortable' => [
-        'order' => 10,
-        'files' => [
-            'js' => [
-                [
-                    'src' => 'dist/lib/sortable/Sortable.min.js',
-                    'defer' => true,
-                ],
-            ],
-        ],
-    ],
-
     'leaflet' => [
         'order' => 20,
         'files' => [
@@ -421,61 +428,66 @@ return [
                 [
                     'src' => 'dist/lib/leaflet/leaflet.js',
                     'defer' => true,
-                ]
+                ],
+                [
+                    'src' => 'dist/lib/leaflet-fullscreen/Control.FullScreen.js',
+                    'defer' => true,
+                ],
             ],
             'css' => [
                 [
                     'href' => 'dist/lib/leaflet/leaflet.css',
-                ]
+                ],
+                [
+                    'href' => 'dist/lib/leaflet-fullscreen/Control.FullScreen.css',
+                ],
             ],
         ],
     ],
 
-    'webcaster' => [
+    'Webcaster' => [
         'order' => 10,
-        'require' => ['vue', 'vue-i18n', 'lodash'],
+        'require' => ['vue-component-common'],
         'files' => [
             'js' => [
                 [
-                    'src' => 'https://cdn.rawgit.com/toots/shine/master/js/dist/libshine.js',
+                    'src' => 'dist/lib/webcaster/libshine.js',
                 ],
                 [
-                    'src' => 'https://cdn.rawgit.com/webcast/libsamplerate.js/master/dist/libsamplerate.js',
+                    'src' => 'dist/lib/webcaster/libsamplerate.js',
                 ],
                 [
-                    'src' => 'https://cdn.rawgit.com/webcast/taglib.js/master/dist/taglib.js',
+                    'src' => 'dist/lib/webcaster/taglib.js',
                 ],
                 [
-                    'src' => 'https://cdn.rawgit.com/webcast/webcast.js/master/lib/webcast.js',
+                    'src' => 'dist/lib/webcaster/webcast.js',
                 ],
-                [
-                    'src' => 'dist/webcaster.js',
-                ],
-            ]
-        ]
+            ],
+        ],
     ],
 
-    'radio_player' => [
+    'StationMedia' => [
         'order' => 10,
-        'require' => ['vue', 'vue-i18n'],
-        'files' => [
-            'js' => [
-                [
-                    'src' => 'dist/radio_player.js',
-                ],
-            ]
-        ]
+        'require' => ['vue-component-common', 'bootstrap-vue'],
+        // Auto-managed by Assets
     ],
 
-    'inline_player' => [
+    'StationPlaylists' => [
         'order' => 10,
-        'require' => ['vue', 'vue-i18n'],
-        'files' => [
-            'js' => [
-                [
-                    'src' => 'dist/inline_player.js',
-                ],
-            ]
-        ]
+        'require' => ['vue-component-common', 'bootstrap-vue', 'moment_base', 'moment_timezone'],
+        'replace' => ['moment'],
+        // Auto-managed by Assets
+    ],
+
+    'StationStreamers' => [
+        'order' => 10,
+        'require' => ['vue-component-common', 'bootstrap-vue', 'moment'],
+        // Auto-managed by Assets
+    ],
+
+    'StationOnDemand' => [
+        'order' => 10,
+        'require' => ['vue-component-common', 'bootstrap-vue'],
+        // Auto-managed by Assets
     ],
 ];

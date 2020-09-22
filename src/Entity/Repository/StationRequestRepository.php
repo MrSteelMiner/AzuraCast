@@ -1,42 +1,42 @@
 <?php
 namespace App\Entity\Repository;
 
+use App\Doctrine\Repository;
 use App\Entity;
-use Azura\Doctrine\Repository;
+use App\Exception;
+use App\Radio\AutoDJ;
+use App\Utilities;
+use Carbon\CarbonImmutable;
+use Carbon\CarbonInterface;
 
 class StationRequestRepository extends Repository
 {
-    /**
-     * Submit a new request.
-     *
-     * @param Entity\Station $station
-     * @param int $track_id
-     * @param bool $is_authenticated
-     * @return mixed
-     * @throws \Azura\Exception
-     */
-    public function submit(Entity\Station $station, $track_id, $is_authenticated = false)
-    {
+    public function submit(
+        Entity\Station $station,
+        string $trackId,
+        bool $isAuthenticated,
+        string $ip
+    ): int {
         // Forbid web crawlers from using this feature.
-        if (\App\Utilities::isCrawler()) {
-            throw new \Azura\Exception(__('Search engine crawlers are not permitted to use this feature.'));
+        if (Utilities::isCrawler()) {
+            throw new Exception(__('Search engine crawlers are not permitted to use this feature.'));
         }
 
         // Verify that the station supports requests.
         if (!$station->getEnableRequests()) {
-            throw new \Azura\Exception(__('This station does not accept requests currently.'));
+            throw new Exception(__('This station does not accept requests currently.'));
         }
 
         // Verify that Track ID exists with station.
-        $media_repo = $this->_em->getRepository(Entity\StationMedia::class);
-        $media_item = $media_repo->findOneBy(['unique_id' => $track_id, 'station_id' => $station->getId()]);
+        $media_repo = $this->em->getRepository(Entity\StationMedia::class);
+        $media_item = $media_repo->findOneBy(['unique_id' => $trackId, 'station_id' => $station->getId()]);
 
         if (!($media_item instanceof Entity\StationMedia)) {
-            throw new \Azura\Exception(__('The song ID you specified could not be found in the station.'));
+            throw new Exception(__('The song ID you specified could not be found in the station.'));
         }
 
         if (!$media_item->isRequestable()) {
-            throw new \Azura\Exception(__('The song ID you specified cannot be requested for this station.'));
+            throw new Exception(__('The song ID you specified cannot be requested for this station.'));
         }
 
         // Check if the song is already enqueued as a request.
@@ -45,31 +45,33 @@ class StationRequestRepository extends Repository
         // Check the most recent song history.
         $this->checkRecentPlay($media_item, $station);
 
-        if (!$is_authenticated) {
-            // Check for an existing request from this user.
-            $user_ip = $_SERVER['REMOTE_ADDR'];
-
+        if (!$isAuthenticated) {
             // Check for any request (on any station) within the last $threshold_seconds.
-            $threshold_mins = $station->getRequestThreshold() ?? 5;
-            $threshold_seconds = $threshold_mins * 60;
+            $thresholdMins = $station->getRequestThreshold() ?? 5;
+            $thresholdSeconds = $thresholdMins * 60;
 
-            $recent_requests = $this->_em->createQuery(/** @lang DQL */'SELECT sr 
+            // Always have a minimum threshold to avoid flooding.
+            if ($thresholdSeconds < 60) {
+                $thresholdSeconds = 15;
+            }
+
+            $recent_requests = $this->em->createQuery(/** @lang DQL */ 'SELECT sr 
                 FROM App\Entity\StationRequest sr 
                 WHERE sr.ip = :user_ip 
                 AND sr.timestamp >= :threshold')
-                ->setParameter('user_ip', $user_ip)
-                ->setParameter('threshold', time() - $threshold_seconds)
+                ->setParameter('user_ip', $ip)
+                ->setParameter('threshold', time() - $thresholdSeconds)
                 ->getArrayResult();
 
             if (count($recent_requests) > 0) {
-                throw new \Azura\Exception(__('You have submitted a request too recently! Please wait before submitting another one.'));
+                throw new Exception(__('You have submitted a request too recently! Please wait before submitting another one.'));
             }
         }
 
         // Save request locally.
-        $record = new Entity\StationRequest($station, $media_item);
-        $this->_em->persist($record);
-        $this->_em->flush();
+        $record = new Entity\StationRequest($station, $media_item, $ip);
+        $this->em->persist($record);
+        $this->em->flush();
 
         return $record->getId();
     }
@@ -79,15 +81,16 @@ class StationRequestRepository extends Repository
      *
      * @param Entity\StationMedia $media
      * @param Entity\Station $station
+     *
      * @return bool
-     * @throws \Azura\Exception
+     * @throws Exception
      */
-    public function checkPendingRequest(Entity\StationMedia $media, Entity\Station $station)
+    public function checkPendingRequest(Entity\StationMedia $media, Entity\Station $station): bool
     {
         $pending_request_threshold = time() - (60 * 10);
 
         try {
-            $pending_request = $this->_em->createQuery(/** @lang DQL */'SELECT sr.timestamp 
+            $pending_request = $this->em->createQuery(/** @lang DQL */ 'SELECT sr.timestamp 
                 FROM App\Entity\StationRequest sr
                 WHERE sr.track_id = :track_id 
                 AND sr.station_id = :station_id 
@@ -103,10 +106,41 @@ class StationRequestRepository extends Repository
         }
 
         if ($pending_request > 0) {
-            throw new \Azura\Exception(__('Duplicate request: this song was already requested and will play soon.'));
+            throw new Exception(__('Duplicate request: this song was already requested and will play soon.'));
         }
 
         return true;
+    }
+
+    public function getNextPlayableRequest(
+        Entity\Station $station,
+        ?CarbonInterface $now = null
+    ): ?Entity\StationRequest {
+        $now ??= CarbonImmutable::now($station->getTimezoneObject());
+
+        // Look up all requests that have at least waited as long as the threshold.
+        $requests = $this->em->createQuery(/** @lang DQL */ 'SELECT sr, sm 
+            FROM App\Entity\StationRequest sr JOIN sr.track sm
+            WHERE sr.played_at = 0 
+            AND sr.station = :station
+            ORDER BY sr.skip_delay DESC, sr.id ASC')
+            ->setParameter('station', $station)
+            ->execute();
+
+        foreach ($requests as $request) {
+            /** @var Entity\StationRequest $request */
+            if ($request->shouldPlayNow($now)) {
+                try {
+                    $this->checkRecentPlay($request->getTrack(), $station);
+                } catch (\Exception $e) {
+                    continue;
+                }
+
+                return $request;
+            }
+        }
+
+        return null;
     }
 
     /**
@@ -114,37 +148,43 @@ class StationRequestRepository extends Repository
      *
      * @param Entity\StationMedia $media
      * @param Entity\Station $station
+     *
      * @return bool
-     * @throws \Azura\Exception
+     * @throws Exception
      */
     public function checkRecentPlay(Entity\StationMedia $media, Entity\Station $station): bool
     {
-        $last_play_threshold_mins = (int)($station->getRequestThreshold() ?? 15);
+        $lastPlayThresholdMins = ($station->getRequestThreshold() ?? 15);
 
-        if (0 === $last_play_threshold_mins) {
+        if (0 === $lastPlayThresholdMins) {
             return true;
         }
 
-        $last_play_threshold = time() - ($last_play_threshold_mins * 60);
+        $lastPlayThreshold = time() - ($lastPlayThresholdMins * 60);
 
-        try {
-            $last_play_time = $this->_em->createQuery(/** @lang DQL */'SELECT sh.timestamp_start 
+        $recentTracks = $this->em->createQuery(/** @lang DQL */ 'SELECT sh.id, s.title, s.artist 
                 FROM App\Entity\SongHistory sh 
-                WHERE sh.media_id = :media_id 
-                AND sh.station_id = :station_id
+                JOIN sh.song s
+                WHERE sh.station = :station
                 AND sh.timestamp_start >= :threshold
                 ORDER BY sh.timestamp_start DESC')
-                ->setParameter('media_id', $media->getId())
-                ->setParameter('station_id', $station->getId())
-                ->setParameter('threshold', $last_play_threshold)
-                ->setMaxResults(1)
-                ->getSingleScalarResult();
-        } catch(\Doctrine\ORM\NoResultException $e) {
-            return true;
-        }
+            ->setParameter('station', $station)
+            ->setParameter('threshold', $lastPlayThreshold)
+            ->getArrayResult();
 
-        if ($last_play_time > 0) {
-            throw new \Azura\Exception(__('This song was already played too recently. Wait a while before requesting it again.'));
+        $song = $media->getSong();
+
+        $eligibleTracks = [
+            [
+                'title' => $song->getTitle(),
+                'artist' => $song->getArtist(),
+            ],
+        ];
+
+        $isDuplicate = (null === AutoDJ\Queue::getDistinctTrack($eligibleTracks, $recentTracks));
+
+        if ($isDuplicate) {
+            throw new Exception(__('This song or artist has been played too recently. Wait a while before requesting it again.'));
         }
 
         return true;

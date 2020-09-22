@@ -4,11 +4,18 @@ namespace App\Entity\Fixture;
 use App\Entity;
 use Doctrine\Common\DataFixtures\AbstractFixture;
 use Doctrine\Common\DataFixtures\DependentFixtureInterface;
-use Doctrine\Common\Persistence\ObjectManager;
+use Doctrine\Persistence\ObjectManager;
 use Symfony\Component\Finder\Finder;
 
 class StationMedia extends AbstractFixture implements DependentFixtureInterface
 {
+    protected Entity\Repository\StationMediaRepository $mediaRepo;
+
+    public function __construct(Entity\Repository\StationMediaRepository $mediaRepo)
+    {
+        $this->mediaRepo = $mediaRepo;
+    }
+
     public function load(ObjectManager $em)
     {
         $music_skeleton_dir = getenv('INIT_MUSIC_PATH');
@@ -25,9 +32,6 @@ class StationMedia extends AbstractFixture implements DependentFixtureInterface
         /** @var Entity\StationPlaylist $playlist */
         $playlist = $this->getReference('station_playlist');
 
-        /** @var Entity\Repository\StationMediaRepository $media_repo */
-        $media_repo = $em->getRepository(Entity\StationMedia::class);
-
         $finder = (new Finder())
             ->files()
             ->in($music_skeleton_dir)
@@ -40,7 +44,7 @@ class StationMedia extends AbstractFixture implements DependentFixtureInterface
             // Copy the file to the station media directory.
             copy($file_path, $station_media_dir . '/' . $file_base_name);
 
-            $media_row = $media_repo->getOrCreate($station, $file_base_name);
+            $media_row = $this->mediaRepo->getOrCreate($station, $file_base_name);
             $em->persist($media_row);
 
             // Add the file to the playlist.
@@ -52,6 +56,9 @@ class StationMedia extends AbstractFixture implements DependentFixtureInterface
         $em->flush();
     }
 
+    /**
+     * @return string[]
+     */
     public function getDependencies()
     {
         return [

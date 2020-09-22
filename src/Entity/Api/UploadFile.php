@@ -1,6 +1,7 @@
 <?php
 namespace App\Entity\Api;
 
+use App\File;
 use OpenApi\Annotations as OA;
 use Symfony\Component\Validator\Constraints as Assert;
 
@@ -16,7 +17,7 @@ class UploadFile
      *
      * @var string The destination path of the uploaded file.
      */
-    public $path;
+    public string $path;
 
     /**
      * @OA\Property(example="")
@@ -25,16 +26,21 @@ class UploadFile
      *
      * @var string The base64-encoded contents of the file to upload.
      */
-    public $file;
+    public string $file;
 
     public function getSanitizedFilename(): string
     {
-        return \Azura\File::sanitizeFileName(basename($this->path));
+        return File::sanitizeFileName(basename($this->getPath()));
     }
 
     public function getSanitizedPath(): string
     {
-        return \Azura\File::sanitizePathPrefix($this->path);
+        return File::sanitizePathPrefix($this->getPath());
+    }
+
+    public function getPath(): string
+    {
+        return ltrim($this->path, '/');
     }
 
     public function getFileContents(): string

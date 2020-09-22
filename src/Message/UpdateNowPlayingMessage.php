@@ -1,13 +1,7 @@
 <?php
 namespace App\Message;
 
-class UpdateNowPlayingMessage extends AbstractDelayedMessage
+class UpdateNowPlayingMessage extends AbstractMessage
 {
-    public function __construct()
-    {
-        $this->delay = self::ONE_SEC*2;
-    }
-
-    /** @var int */
-    public $station_id;
+    public int $station_id;
 }

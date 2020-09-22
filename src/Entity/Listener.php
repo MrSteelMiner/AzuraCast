@@ -2,35 +2,17 @@
 namespace App\Entity;
 
 use Doctrine\ORM\Mapping as ORM;
+use NowPlaying\Result\Client;
 
 /**
  * @ORM\Table(name="listener", indexes={
- *   @ORM\Index(name="update_idx", columns={"listener_hash"}),
- *   @ORM\Index(name="search_idx", columns={"listener_uid", "timestamp_end"})
+ *     @ORM\Index(name="idx_timestamps", columns={"timestamp_end", "timestamp_start"}),
  * })
- * @ORM\Entity(repositoryClass="App\Entity\Repository\ListenerRepository")
+ * @ORM\Entity()
  */
 class Listener
 {
     use Traits\TruncateStrings;
-
-    /**
-     * Listener constructor.
-     * @param Station $station
-     * @param array $client
-     */
-    public function __construct(Station $station, $client)
-    {
-        $this->station = $station;
-
-        $this->timestamp_start = time();
-        $this->timestamp_end = 0;
-
-        $this->listener_uid = $client['uid'];
-        $this->listener_user_agent = $this->_truncateString($client['user_agent']) ?? '';
-        $this->listener_ip = $client['ip'];
-        $this->listener_hash = self::calculateListenerHash($client);
-    }
 
     /**
      * @ORM\Column(name="id", type="integer")
@@ -91,118 +73,134 @@ class Listener
      */
     protected $timestamp_end;
 
-    /**
-     * @return int
-     */
+    public function __construct(Station $station, Client $client)
+    {
+        $this->station = $station;
+
+        $this->timestamp_start = time();
+        $this->timestamp_end = 0;
+
+        $this->listener_uid = (int)$client->uid;
+        $this->listener_user_agent = $this->truncateString($client->userAgent) ?? '';
+        $this->listener_ip = $client->ip;
+        $this->listener_hash = self::calculateListenerHash($client);
+    }
+
     public function getId(): int
     {
         return $this->id;
     }
 
-    /**
-     * @return Station
-     */
     public function getStation(): Station
     {
         return $this->station;
     }
 
-    /**
-     * @return int
-     */
     public function getListenerUid(): int
     {
         return $this->listener_uid;
     }
 
-    /**
-     * @return string
-     */
     public function getListenerIp(): string
     {
         return $this->listener_ip;
     }
 
-    /**
-     * @return string
-     */
     public function getListenerUserAgent(): string
     {
         return $this->listener_user_agent;
     }
 
-    /**
-     * @return string
-     */
     public function getListenerHash(): string
     {
         return $this->listener_hash;
     }
 
-    /**
-     * @return int
-     */
     public function getTimestampStart(): int
     {
         return $this->timestamp_start;
     }
 
-    /**
-     * @return int
-     */
     public function getTimestamp(): int
     {
         return $this->timestamp_start;
     }
 
-    /**
-     * @return int
-     */
     public function getTimestampEnd(): int
     {
         return $this->timestamp_end;
     }
 
-    /**
-     * @param int $timestamp_end
-     */
     public function setTimestampEnd(int $timestamp_end): void
     {
         $this->timestamp_end = $timestamp_end;
     }
 
-    /**
-     * @return int
-     */
     public function getConnectedSeconds(): int
     {
         return $this->timestamp_end - $this->timestamp_start;
     }
 
     /**
-     * @param array $client
-     * @return string
-     */
-    public static function calculateListenerHash($client): string
-    {
-        return md5($client['ip'].$client['user_agent']);
-    }
-
-    /**
      * Filter clients to exclude any listeners that shouldn't be included (i.e. relays).
      *
      * @param array $clients
+     *
      * @return array
      */
     public static function filterClients(array $clients): array
     {
-        return array_filter($clients, function($client) {
+        return array_filter($clients, function ($client) {
             // Ignore clients with the "Icecast" UA as those are relays and not listeners.
-            if (false !== stripos($client['user_agent'], 'Icecast')) {
-                return false;
+            return !(false !== stripos($client['user_agent'], 'Icecast'));
+        });
+    }
+
+    public static function getListenerSeconds(array $intervals): int
+    {
+        // Sort by start time.
+        usort($intervals, function ($a, $b) {
+            return $a['start'] <=> $b['start'];
+        });
+
+        $seconds = 0;
+
+        while (count($intervals) > 0) {
+            $currentInterval = array_shift($intervals);
+            $start = $currentInterval['start'];
+            $end = $currentInterval['end'];
+
+            foreach ($intervals as $intervalKey => $interval) {
+                // Starts after this interval ends; no more entries to process
+                if ($interval['start'] > $end) {
+                    break;
+                }
+
+                // Extend the current interval's end
+                if ($interval['end'] > $end) {
+                    $end = $interval['end'];
+                }
+
+                unset($intervals[$intervalKey]);
             }
 
-            return true;
-        });
+            $seconds += $end - $start;
+        }
+
+        return $seconds;
+    }
+
+    /**
+     * @param array|Client $client
+     *
+     * @return string
+     */
+    public static function calculateListenerHash($client): string
+    {
+        if ($client instanceof Client) {
+            return md5($client->ip . $client->userAgent);
+        }
+
+        return md5($client['ip'] . $client['user_agent']);
     }
 }

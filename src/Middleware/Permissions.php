@@ -1,8 +1,9 @@
 <?php
 namespace App\Middleware;
 
-use App\Exception\PermissionDenied;
+use App\Exception\PermissionDeniedException;
 use App\Http\ServerRequest;
+use Exception;
 use Psr\Http\Message\ResponseInterface;
 use Psr\Http\Server\RequestHandlerInterface;
 
@@ -11,11 +12,9 @@ use Psr\Http\Server\RequestHandlerInterface;
  */
 class Permissions
 {
-    /** @var string */
-    protected $action;
+    protected string $action;
 
-    /** @var bool */
-    protected $use_station;
+    protected bool $use_station;
 
     public function __construct(
         string $action,
@@ -28,6 +27,7 @@ class Permissions
     /**
      * @param ServerRequest $request
      * @param RequestHandlerInterface $handler
+     *
      * @return ResponseInterface
      */
     public function __invoke(ServerRequest $request, RequestHandlerInterface $handler): ResponseInterface
@@ -41,13 +41,13 @@ class Permissions
 
         try {
             $user = $request->getUser();
-        } catch (\Exception $e) {
-            throw new PermissionDenied;
+        } catch (Exception $e) {
+            throw new PermissionDeniedException;
         }
 
         $acl = $request->getAcl();
         if (!$acl->userAllowed($user, $this->action, $station_id)) {
-            throw new PermissionDenied;
+            throw new PermissionDeniedException;
         }
 
         return $handler->handle($request);

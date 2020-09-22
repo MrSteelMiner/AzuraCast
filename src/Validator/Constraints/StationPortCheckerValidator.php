@@ -9,13 +9,8 @@ use Symfony\Component\Validator\Exception\UnexpectedTypeException;
 
 class StationPortCheckerValidator extends ConstraintValidator
 {
-    /** @var Configuration */
-    protected $configuration;
+    protected Configuration $configuration;
 
-    /**
-     * StationPortCheckerValidator constructor.
-     * @param Configuration $configuration
-     */
     public function __construct(Configuration $configuration)
     {
         $this->configuration = $configuration;
@@ -30,32 +25,32 @@ class StationPortCheckerValidator extends ConstraintValidator
             throw new UnexpectedTypeException($station, Entity\Station::class);
         }
 
-        $frontend_config = (array)$station->getFrontendConfig();
-        $backend_config = (array)$station->getBackendConfig();
+        $frontend_config = $station->getFrontendConfig();
+        $backend_config = $station->getBackendConfig();
 
         $ports_to_check = [
-            'frontend_config_port' => $frontend_config['port'] ?? '',
-            'backend_config_dj_port' => $backend_config['dj_port'] ?? '',
-            'backend_config_telnet_port' => $backend_config['telnet_port'] ?? '',
+            'frontend_config_port' => $frontend_config->getPort(),
+            'backend_config_dj_port' => $backend_config->getDjPort(),
+            'backend_config_telnet_port' => $backend_config->getTelnetPort(),
         ];
 
         $used_ports = $this->configuration->getUsedPorts($station);
 
-        foreach($ports_to_check as $port_path => $value) {
-            if (null === $value || '' === $value) {
+        foreach ($ports_to_check as $port_path => $value) {
+            if (null === $value) {
                 continue;
             }
 
             $port = (int)$value;
             if (isset($used_ports[$port])) {
                 $this->context->buildViolation($constraint->message)
-                    ->setParameter('{{ port }}', $port)
+                    ->setParameter('{{ port }}', (string)$port)
                     ->addViolation();
             }
 
-            if ($port_path === 'backend_config_dj_port' && isset($used_ports[$port+1])) {
+            if ($port_path === 'backend_config_dj_port' && isset($used_ports[$port + 1])) {
                 $this->context->buildViolation($constraint->message)
-                    ->setParameter('{{ port }}', sprintf('%s (%s + 1)', $port+1, $port))
+                    ->setParameter('{{ port }}', sprintf('%s (%s + 1)', $port + 1, $port))
                     ->addViolation();
             }
         }

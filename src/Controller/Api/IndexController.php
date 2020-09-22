@@ -4,6 +4,8 @@ namespace App\Controller\Api;
 use App\Entity;
 use App\Http\Response;
 use App\Http\ServerRequest;
+use App\Timezone;
+use OpenApi\Annotations as OA;
 use Psr\Http\Message\ResponseInterface;
 
 class IndexController
@@ -13,6 +15,7 @@ class IndexController
      *
      * @param ServerRequest $request
      * @param Response $response
+     *
      * @return ResponseInterface
      */
     public function indexAction(ServerRequest $request, Response $response): ResponseInterface
@@ -34,6 +37,7 @@ class IndexController
      *
      * @param ServerRequest $request
      * @param Response $response
+     *
      * @return ResponseInterface
      */
     public function statusAction(ServerRequest $request, Response $response): ResponseInterface
@@ -55,11 +59,12 @@ class IndexController
      *
      * @param ServerRequest $request
      * @param Response $response
+     *
      * @return ResponseInterface
      */
     public function timeAction(ServerRequest $request, Response $response): ResponseInterface
     {
-        $tz_info = \Azura\Timezone::getInfo();
+        $tz_info = Timezone::getInfo();
         return $response->withJson(new Entity\Api\Time($tz_info));
     }
 }

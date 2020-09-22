@@ -3,33 +3,31 @@ namespace App\Sync\Task;
 
 use App\Entity;
 use App\Event\Radio\AnnotateNextSong;
+use App\EventDispatcher;
 use App\Radio\Adapters;
-use Azura\EventDispatcher;
-use Doctrine\ORM\EntityManager;
-use Monolog\Logger;
+use App\Radio\Backend\Liquidsoap;
+use Doctrine\ORM\EntityManagerInterface;
+use Psr\Log\LoggerInterface;
 
 class RadioRequests extends AbstractTask
 {
-    /** @var Adapters */
-    protected $adapters;
+    protected Adapters $adapters;
 
-    /** @var EventDispatcher */
-    protected $dispatcher;
+    protected EventDispatcher $dispatcher;
 
-    /**
-     * @param EntityManager $em
-     * @param Logger $logger
-     * @param Adapters $adapters
-     * @param EventDispatcher $dispatcher
-     */
+    protected Entity\Repository\StationRequestRepository $requestRepo;
+
     public function __construct(
-        EntityManager $em,
-        Logger $logger,
+        EntityManagerInterface $em,
+        Entity\Repository\SettingsRepository $settingsRepo,
+        LoggerInterface $logger,
+        Entity\Repository\StationRequestRepository $requestRepo,
         Adapters $adapters,
         EventDispatcher $dispatcher
     ) {
-        parent::__construct($em, $logger);
+        parent::__construct($em, $settingsRepo, $logger);
 
+        $this->requestRepo = $requestRepo;
         $this->dispatcher = $dispatcher;
         $this->adapters = $adapters;
     }
@@ -39,87 +37,69 @@ class RadioRequests extends AbstractTask
      *
      * @param bool $force
      */
-    public function run($force = false): void
+    public function run(bool $force = false): void
     {
-        /** @var Entity\Repository\StationRepository $stations */
+        /** @var Entity\Station[] $stations */
         $stations = $this->em->getRepository(Entity\Station::class)->findAll();
 
-        /** @var Entity\Repository\StationRequestRepository $request_repo */
-        $request_repo = $this->em->getRepository(Entity\StationRequest::class);
-
         foreach ($stations as $station) {
-            /** @var Entity\Station $station */
-            if (!$station->getEnableRequests() || !$station->useManualAutoDJ()) {
+            if (!$station->useManualAutoDJ()) {
                 continue;
             }
 
-            $min_minutes = (int)$station->getRequestDelay();
-            $threshold_minutes = $min_minutes + mt_rand(0, $min_minutes);
-
-            $threshold = time() - ($threshold_minutes * 60);
-
-            // Look up all requests that have at least waited as long as the threshold.
-            $requests = $this->em->createQuery(/** @lang DQL */'SELECT sr, sm 
-                FROM App\Entity\StationRequest sr 
-                JOIN sr.track sm
-                WHERE sr.played_at = 0 
-                AND sr.station_id = :station_id 
-                AND sr.timestamp <= :threshold
-                ORDER BY sr.id ASC')
-                ->setParameter('station_id', $station->getId())
-                ->setParameter('threshold', $threshold)
-                ->execute();
-
-            foreach($requests as $request) {
-                /** @var Entity\StationRequest $request */
-                $request_repo->checkRecentPlay($request->getTrack(), $station);
-                $this->_submitRequest($station, $request);
-                break;
+            $request = $this->requestRepo->getNextPlayableRequest($station);
+            if (null === $request) {
+                continue;
             }
+
+            $this->submitRequest($station, $request);
         }
     }
 
-    protected function _submitRequest(Entity\Station $station, Entity\StationRequest $request): bool
+    protected function submitRequest(Entity\Station $station, Entity\StationRequest $request): bool
     {
         // Send request to the station to play the request.
         $backend = $this->adapters->getBackendAdapter($station);
-        if (!method_exists($backend, 'request')) {
+
+        if (!($backend instanceof Liquidsoap)) {
             return false;
         }
 
-        /** @var Entity\Repository\SongHistoryRepository $sh_repo */
-        $sh_repo = $this->em->getRepository(Entity\SongHistory::class);
-
         // Check for an existing SongHistory record and skip if one exists.
-        $sh = $sh_repo->findOneBy([
+        $sq = $this->em->getRepository(Entity\StationQueue::class)->findOneBy([
             'station' => $station,
             'request' => $request,
         ]);
 
-        if (!$sh instanceof Entity\SongHistory) {
+        if (!$sq instanceof Entity\StationQueue) {
             // Log the item in SongHistory.
             $media = $request->getTrack();
 
-            $sh = new Entity\SongHistory($media->getSong(), $station);
-            $sh->setTimestampCued(time());
-            $sh->setMedia($media);
-            $sh->setRequest($request);
-            $sh->sentToAutodj();
+            $sq = new Entity\StationQueue($station, $media->getSong());
+            $sq->setTimestampCued(time());
+            $sq->setMedia($media);
+            $sq->setRequest($request);
+            $sq->sentToAutodj();
 
-            $this->em->persist($sh);
-            $this->em->flush($sh);
+            $this->em->persist($sq);
+            $this->em->flush();
         }
 
         // Generate full Liquidsoap annotations
-        $event = new AnnotateNextSong($station, $sh);
+        $event = new AnnotateNextSong($sq, true);
         $this->dispatcher->dispatch($event);
 
         $track = $event->buildAnnotations();
 
         // Queue request with Liquidsoap.
-        $this->logger->debug('Submitting request to AutoDJ.', ['track' => $track]);
-        $response = $backend->request($station, $track);
+        if (!$backend->isQueueEmpty($station)) {
+            $this->logger->error('Skipping submitting request to Liquidsoap; current queue is occupied.');
+            return false;
+        }
 
+        $this->logger->debug('Submitting request to AutoDJ.', ['track' => $track]);
+
+        $response = $backend->enqueue($station, $track);
         $this->logger->debug('AutoDJ request response', ['response' => $response]);
 
         // Log the request as played.

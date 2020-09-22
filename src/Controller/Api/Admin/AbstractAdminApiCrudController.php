@@ -3,10 +3,12 @@ namespace App\Controller\Api\Admin;
 
 use App\Controller\Api\AbstractApiCrudController;
 use App\Entity;
+use App\Exception;
 use App\Http\Response;
 use App\Http\ServerRequest;
-use App\Utilities;
-use Azura\Doctrine\Paginator;
+use Doctrine\ORM\OptimisticLockException;
+use Doctrine\ORM\ORMException;
+use Doctrine\ORM\TransactionRequiredException;
 use Psr\Http\Message\ResponseInterface;
 
 abstract class AbstractAdminApiCrudController extends AbstractApiCrudController
@@ -15,78 +17,84 @@ abstract class AbstractAdminApiCrudController extends AbstractApiCrudController
     {
         $query = $this->em->createQuery('SELECT e FROM ' . $this->entityClass . ' e');
 
-        $paginator = new Paginator($query);
-        $paginator->setFromRequest($request);
-
-        $is_bootgrid = $paginator->isFromBootgrid();
-        $router = $request->getRouter();
-
-        $paginator->setPostprocessor(function($row) use ($is_bootgrid, $router) {
-            $return = $this->_viewRecord($row, $router);
-
-            if ($is_bootgrid) {
-                return Utilities::flattenArray($return, '_');
-            }
-
-            return $return;
-        });
-
-        return $paginator->write($response);
+        return $this->listPaginatedFromQuery($request, $response, $query);
     }
 
     /**
      * @param ServerRequest $request
      * @param Response $response
+     *
      * @return ResponseInterface
-     * @throws \Azura\Exception
+     * @throws Exception
      */
     public function createAction(ServerRequest $request, Response $response): ResponseInterface
     {
         $row = $this->_createRecord($request->getParsedBody());
 
-        $return = $this->_viewRecord($row, $request->getRouter());
-        return $response->withJson($return);
-    }
-
-    /**
-     * @param ServerRequest $request
-     * @param Response $response
-     * @param mixed $record_id
-     * @return ResponseInterface
-     */
-    public function getAction(ServerRequest $request, Response $response, $record_id): ResponseInterface
-    {
-        $record = $this->_getRecord($record_id);
-
-        $return = $this->_viewRecord($record, $request->getRouter());
+        $return = $this->viewRecord($row, $request);
         return $response->withJson($return);
     }
 
     /**
      * @param array $data
+     *
      * @return object
      */
     protected function _createRecord($data): object
     {
-        return $this->_editRecord($data, null);
+        return $this->editRecord($data, null);
     }
 
     /**
      * @param ServerRequest $request
      * @param Response $response
-     * @param mixed $record_id
+     * @param mixed $id
+     *
      * @return ResponseInterface
      */
-    public function editAction(ServerRequest $request, Response $response, $record_id): ResponseInterface
+    public function getAction(ServerRequest $request, Response $response, $id): ResponseInterface
     {
-        $record = $this->_getRecord($record_id);
+        $record = $this->_getRecord($id);
 
         if (null === $record) {
             return $response->withStatus(404)
                 ->withJson(new Entity\Api\Error(404, __('Record not found!')));
         }
 
-        $this->_editRecord($request->getParsedBody(), $record);
+        $return = $this->viewRecord($record, $request);
+        return $response->withJson($return);
+    }
+
+    /**
+     * @param mixed $id
+     *
+     * @return object|null
+     * @throws ORMException
+     * @throws OptimisticLockException
+     * @throws TransactionRequiredException
+     */
+    protected function _getRecord($id)
+    {
+        return $this->em->find($this->entityClass, $id);
+    }
+
+    /**
+     * @param ServerRequest $request
+     * @param Response $response
+     * @param mixed $id
+     *
+     * @return ResponseInterface
+     */
+    public function editAction(ServerRequest $request, Response $response, $id): ResponseInterface
+    {
+        $record = $this->_getRecord($id);
+
+        if (null === $record) {
+            return $response->withStatus(404)
+                ->withJson(new Entity\Api\Error(404, __('Record not found!')));
+        }
+
+        $this->editRecord($request->getParsedBody(), $record);
 
         return $response->withJson(new Entity\Api\Status(true, __('Changes saved successfully.')));
     }
@@ -94,32 +102,21 @@ abstract class AbstractAdminApiCrudController extends AbstractApiCrudController
     /**
      * @param ServerRequest $request
      * @param Response $response
-     * @param mixed $record_id
+     * @param mixed $id
+     *
      * @return ResponseInterface
      */
-    public function deleteAction(ServerRequest $request, Response $response, $record_id): ResponseInterface
+    public function deleteAction(ServerRequest $request, Response $response, $id): ResponseInterface
     {
-        $record = $this->_getRecord($record_id);
+        $record = $this->_getRecord($id);
 
         if (null === $record) {
             return $response->withStatus(404)
                 ->withJson(new Entity\Api\Error(404, __('Record not found!')));
         }
 
-        $this->_deleteRecord($record);
+        $this->deleteRecord($record);
 
         return $response->withJson(new Entity\Api\Status(true, __('Record deleted successfully.')));
-    }
-
-    /**
-     * @param mixed $record_id
-     * @return object|null
-     * @throws \Doctrine\ORM\ORMException
-     * @throws \Doctrine\ORM\OptimisticLockException
-     * @throws \Doctrine\ORM\TransactionRequiredException
-     */
-    protected function _getRecord($record_id)
-    {
-        return $this->em->find($this->entityClass, $record_id);
     }
 }

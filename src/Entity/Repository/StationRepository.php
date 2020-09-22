@@ -1,65 +1,90 @@
 <?php
 namespace App\Entity\Repository;
 
+use App\Doctrine\Repository;
 use App\Entity;
 use App\Radio\Adapters;
 use App\Radio\Configuration;
 use App\Radio\Frontend\AbstractFrontend;
+use App\Settings;
 use App\Sync\Task\Media;
-use Azura\Doctrine\Repository;
-use DI\Annotation\Inject;
+use App\Utilities;
+use Closure;
+use Doctrine\ORM\EntityManagerInterface;
+use Exception;
+use GuzzleHttp\Psr7\Uri;
+use Psr\Http\Message\UriInterface;
+use Psr\Log\LoggerInterface;
 use Psr\SimpleCache\CacheInterface;
+use Symfony\Component\Serializer\Serializer;
 use Symfony\Component\Validator\Validator\ValidatorInterface;
 
 class StationRepository extends Repository
 {
-    /**
-     * @Inject
-     * @var Media
-     */
-    protected $media_sync;
+    protected Media $media_sync;
+
+    protected Adapters $adapters;
+
+    protected Configuration $configuration;
+
+    protected ValidatorInterface $validator;
+
+    protected CacheInterface $cache;
+
+    protected SettingsRepository $settingsRepo;
+
+    public function __construct(
+        EntityManagerInterface $em,
+        Serializer $serializer,
+        Settings $settings,
+        SettingsRepository $settingsRepo,
+        LoggerInterface $logger,
+        Media $media_sync,
+        Adapters $adapters,
+        Configuration $configuration,
+        ValidatorInterface $validator,
+        CacheInterface $cache
+    ) {
+        $this->media_sync = $media_sync;
+        $this->adapters = $adapters;
+        $this->configuration = $configuration;
+        $this->validator = $validator;
+        $this->cache = $cache;
+        $this->settingsRepo = $settingsRepo;
+
+        parent::__construct($em, $serializer, $settings, $logger);
+    }
 
     /**
-     * @Inject
-     * @var Adapters
+     * @param string $identifier A numeric or string identifier for a station.
+     *
+     * @return Entity\Station|null
      */
-    protected $adapters;
-
-    /**
-     * @Inject
-     * @var Configuration
-     */
-    protected $configuration;
-
-    /**
-     * @Inject
-     * @var ValidatorInterface
-     */
-    protected $validator;
-
-    /**
-     * @Inject
-     * @var CacheInterface
-     */
-    protected $cache;
+    public function findByIdentifier(string $identifier): ?Entity\Station
+    {
+        return is_numeric($identifier)
+            ? $this->repository->find($identifier)
+            : $this->repository->findOneBy(['short_name' => $identifier]);
+    }
 
     /**
      * @return mixed
      */
     public function fetchAll()
     {
-        return $this->_em->createQuery(/** @lang DQL */'SELECT s FROM App\Entity\Station s ORDER BY s.name ASC')
+        return $this->em->createQuery(/** @lang DQL */ 'SELECT s FROM App\Entity\Station s ORDER BY s.name ASC')
             ->execute();
     }
 
     /**
-     * @param bool $add_blank
-     * @param \Closure|NULL $display
+     * @param bool|string $add_blank
+     * @param Closure|NULL $display
      * @param string $pk
      * @param string $order_by
+     *
      * @return array
      */
-    public function fetchSelect($add_blank = false, \Closure $display = null, $pk = 'id', $order_by = 'name')
+    public function fetchSelect($add_blank = false, Closure $display = null, $pk = 'id', $order_by = 'name'): array
     {
         $select = [];
 
@@ -83,20 +108,22 @@ class StationRepository extends Repository
 
     /**
      * @param string $short_code
+     *
      * @return null|object
      */
     public function findByShortCode($short_code)
     {
-        return $this->findOneBy(['short_name' => $short_code]);
+        return $this->repository->findOneBy(['short_name' => $short_code]);
     }
 
     /**
      * @param Entity\Station $record
+     *
+     * @return Entity\Station
      */
-    public function edit(Entity\Station $record): void
+    public function edit(Entity\Station $record): Entity\Station
     {
-        /** @var Entity\Station $original_record */
-        $original_record = $this->_em->getUnitOfWork()->getOriginalEntityData($record);
+        $original_record = $this->em->getUnitOfWork()->getOriginalEntityData($record);
 
         // Get the original values to check for changes.
         $old_frontend = $original_record['frontend_type'];
@@ -114,52 +141,8 @@ class StationRepository extends Repository
         $this->configuration->writeConfiguration($record, $adapter_changed);
 
         $this->cache->delete('stations');
-    }
 
-    /**
-     * Handle tasks necessary to a station's creation.
-     *
-     * @param Entity\Station $station
-     */
-    public function create(Entity\Station $station): void
-    {
-        // Create path for station.
-        $station_base_dir = dirname(APP_INCLUDE_ROOT) . '/stations';
-
-        $station_dir = $station_base_dir . '/' . $station->getShortName();
-        $station->setRadioBaseDir($station_dir);
-
-        $this->_em->persist($station);
-
-        // Generate station ID.
-        $this->_em->flush();
-
-        // Scan directory for any existing files.
-        set_time_limit(600);
-        $this->media_sync->importMusic($station);
-        $this->_em->refresh($station);
-
-        $this->media_sync->importPlaylists($station);
-        $this->_em->refresh($station);
-
-        // Load adapters.
-        $frontend_adapter = $this->adapters->getFrontendAdapter($station);
-        $backend_adapter = $this->adapters->getBackendAdapter($station);
-
-        // Create default mountpoints if station supports them.
-        $this->resetMounts($station, $frontend_adapter);
-
-        // Load configuration from adapter to pull source and admin PWs.
-        $frontend_adapter->read($station);
-
-        // Write the adapter configurations and update supervisord.
-        $this->configuration->writeConfiguration($station, true);
-
-        // Save changes and continue to the last setup step.
-        $this->_em->persist($station);
-        $this->_em->flush();
-
-        $this->cache->delete('stations');
+        return $record;
     }
 
     /**
@@ -170,8 +153,8 @@ class StationRepository extends Repository
      */
     public function resetMounts(Entity\Station $station, AbstractFrontend $frontend_adapter): void
     {
-        foreach($station->getMounts() as $mount) {
-            $this->_em->remove($mount);
+        foreach ($station->getMounts() as $mount) {
+            $this->em->remove($mount);
         }
 
         // Create default mountpoints if station supports them.
@@ -183,17 +166,67 @@ class StationRepository extends Repository
                 $mount_record = new Entity\StationMount($station);
                 $this->fromArray($mount_record, $mount_point);
 
-                $this->_em->persist($mount_record);
+                $this->em->persist($mount_record);
             }
         }
 
-        $this->_em->flush();
-        $this->_em->refresh($station);
+        $this->em->flush();
+    }
+
+    /**
+     * Handle tasks necessary to a station's creation.
+     *
+     * @param Entity\Station $station
+     *
+     * @return Entity\Station
+     */
+    public function create(Entity\Station $station): Entity\Station
+    {
+        // Create path for station.
+        $station->setRadioBaseDir(null);
+
+        $this->em->persist($station);
+
+        // Generate station ID.
+        $this->em->flush();
+
+        // Scan directory for any existing files.
+        set_time_limit(600);
+        $this->media_sync->importMusic($station);
+
+        /** @var Entity\Station $station */
+        $station = $this->em->find(Entity\Station::class, $station->getId());
+
+        $this->media_sync->importPlaylists($station);
+
+        /** @var Entity\Station $station */
+        $station = $this->em->find(Entity\Station::class, $station->getId());
+
+        // Load adapters.
+        $frontend_adapter = $this->adapters->getFrontendAdapter($station);
+
+        // Create default mountpoints if station supports them.
+        $this->resetMounts($station, $frontend_adapter);
+
+        // Load configuration from adapter to pull source and admin PWs.
+        $frontend_adapter->read($station);
+
+        // Write the adapter configurations and update supervisord.
+        $this->configuration->writeConfiguration($station, true);
+
+        // Save changes and continue to the last setup step.
+        $this->em->persist($station);
+        $this->em->flush();
+
+        $this->cache->delete('stations');
+
+        return $station;
     }
 
     /**
      * @param Entity\Station $station
-     * @throws \Exception
+     *
+     * @throws Exception
      */
     public function destroy(Entity\Station $station): void
     {
@@ -201,12 +234,48 @@ class StationRepository extends Repository
 
         // Remove media folders.
         $radio_dir = $station->getRadioBaseDir();
-        \App\Utilities::rmdirRecursive($radio_dir);
+        Utilities::rmdirRecursive($radio_dir);
 
         // Save changes and continue to the last setup step.
-        $this->_em->remove($station);
-        $this->_em->flush($station);
+        $this->em->flush();
+        $this->em->remove($station);
+        $this->em->flush();
 
         $this->cache->delete('stations');
+    }
+
+    /**
+     * Clear the now-playing cache from all stations.
+     */
+    public function clearNowPlaying(): void
+    {
+        $this->em->createQuery(/** @lang DQL */ 'UPDATE App\Entity\Station s SET s.nowplaying=null')
+            ->execute();
+    }
+
+    /**
+     * Return the URL to use for songs with no specified album artwork, when artwork is displayed.
+     *
+     * @param Entity\Station|null $station
+     *
+     * @return UriInterface
+     */
+    public function getDefaultAlbumArtUrl(?Entity\Station $station = null): UriInterface
+    {
+        if ($station instanceof Entity\Station) {
+            $stationCustomUrl = trim($station->getDefaultAlbumArtUrl());
+
+            if (!empty($stationCustomUrl)) {
+                return new Uri($stationCustomUrl);
+            }
+        }
+
+        $custom_url = trim($this->settingsRepo->getSetting(Entity\Settings::DEFAULT_ALBUM_ART_URL));
+
+        if (!empty($custom_url)) {
+            return new Uri($custom_url);
+        }
+
+        return new Uri('/static/img/generic_song.jpg');
     }
 }

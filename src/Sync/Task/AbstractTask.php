@@ -1,27 +1,27 @@
 <?php
 namespace App\Sync\Task;
 
-use Doctrine\ORM\EntityManager;
-use Interop\Container\ContainerInterface;
-use Monolog\Logger;
+use App\Entity;
+use Doctrine\ORM\EntityManagerInterface;
+use Psr\Log\LoggerInterface;
 
 abstract class AbstractTask
 {
-    /** @var EntityManager */
-    protected $em;
+    protected EntityManagerInterface $em;
 
-    /** @var Logger */
-    protected $logger;
+    protected Entity\Repository\SettingsRepository $settingsRepo;
 
-    /**
-     * @param EntityManager $em
-     * @param Logger $logger
-     */
-    public function __construct(EntityManager $em, Logger $logger)
-    {
+    protected LoggerInterface $logger;
+
+    public function __construct(
+        EntityManagerInterface $em,
+        Entity\Repository\SettingsRepository $settingsRepo,
+        LoggerInterface $logger
+    ) {
         $this->em = $em;
+        $this->settingsRepo = $settingsRepo;
         $this->logger = $logger;
     }
 
-    abstract public function run($force = false): void;
+    abstract public function run(bool $force = false): void;
 }

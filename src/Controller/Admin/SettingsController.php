@@ -4,35 +4,23 @@ namespace App\Controller\Admin;
 use App\Form\SettingsForm;
 use App\Http\Response;
 use App\Http\ServerRequest;
-use Azura\Config;
-use Doctrine\ORM\EntityManager;
+use App\Session\Flash;
 use Psr\Http\Message\ResponseInterface;
 
 class SettingsController
 {
-    /** @var SettingsForm */
-    protected $form;
-
-    /**
-     * SettingsController constructor.
-     * @param Config $config
-     * @param EntityManager $em
-     */
-    public function __construct(Config $config, EntityManager $em)
-    {
-        $form = new SettingsForm($em, $config->get('forms/settings'));
-        $this->form = $form;
-    }
-
-    public function indexAction(ServerRequest $request, Response $response): ResponseInterface
-    {
-        if (false !== $this->form->process($request)) {
-            $request->getSession()->flash(__('Changes saved.'), 'green');
+    public function __invoke(
+        ServerRequest $request,
+        Response $response,
+        SettingsForm $form
+    ): ResponseInterface {
+        if (false !== $form->process($request)) {
+            $request->getFlash()->addMessage(__('Changes saved.'), Flash::SUCCESS);
             return $response->withRedirect($request->getUri()->getPath());
         }
 
         return $request->getView()->renderToResponse($response, 'system/form_page', [
-            'form' => $this->form,
+            'form' => $form,
             'render_mode' => 'edit',
             'title' => __('System Settings'),
         ]);

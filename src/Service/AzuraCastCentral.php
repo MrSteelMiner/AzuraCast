@@ -2,43 +2,38 @@
 namespace App\Service;
 
 use App\Entity;
+use App\Settings;
 use App\Version;
-use Azura\Settings;
-use Doctrine\ORM\EntityManager;
+use Exception;
 use GuzzleHttp\Client;
+use Psr\Log\LoggerInterface;
 
 class AzuraCastCentral
 {
     protected const BASE_URL = 'https://central.azuracast.com';
 
-    /** @var Settings */
-    protected $app_settings;
+    protected Settings $app_settings;
 
-    /** @var Client */
-    protected $http_client;
+    protected Client $http_client;
 
-    /** @var Entity\Repository\SettingsRepository */
-    protected $settings_repo;
+    protected Entity\Repository\SettingsRepository $settings_repo;
 
-    /** @var Version */
-    protected $version;
+    protected Version $version;
 
-    /**
-     * @param EntityManager $em
-     * @param Settings $app_settings
-     * @param Version $version
-     * @param Client $http_client
-     */
+    protected LoggerInterface $logger;
+
     public function __construct(
-        EntityManager $em,
+        Entity\Repository\SettingsRepository $settings_repo,
         Settings $app_settings,
         Version $version,
-        Client $http_client
+        Client $http_client,
+        LoggerInterface $logger
     ) {
-        $this->settings_repo = $em->getRepository(Entity\Settings::class);
+        $this->settings_repo = $settings_repo;
         $this->app_settings = $app_settings;
         $this->version = $version;
         $this->http_client = $http_client;
+        $this->logger = $logger;
     }
 
     /**
@@ -51,8 +46,8 @@ class AzuraCastCentral
         $app_uuid = $this->settings_repo->getUniqueIdentifier();
 
         $request_body = [
-            'id'        => $app_uuid,
-            'is_docker' => (bool)$this->app_settings->isDocker(),
+            'id' => $app_uuid,
+            'is_docker' => $this->app_settings->isDocker(),
             'environment' => $this->app_settings[Settings::APP_ENV],
         ];
 
@@ -63,39 +58,54 @@ class AzuraCastCentral
             $request_body['release'] = Version::FALLBACK_VERSION;
         }
 
-        $response = $this->http_client->request(
-            'POST',
-            self::BASE_URL.'/api/update',
-            ['json' => $request_body]
-        );
+        try {
+            $response = $this->http_client->request(
+                'POST',
+                self::BASE_URL . '/api/update',
+                ['json' => $request_body]
+            );
 
-        $update_data_raw = $response->getBody()->getContents();
+            $update_data_raw = $response->getBody()->getContents();
 
-        $update_data = json_decode($update_data_raw, true);
-        return $update_data['updates'] ?? null;
+            $update_data = json_decode($update_data_raw, true, 512, JSON_THROW_ON_ERROR);
+            return $update_data['updates'] ?? null;
+        } catch (Exception $e) {
+            $this->logger->error('Error checking for updates: ' . $e->getMessage());
+        }
+
+        return null;
     }
 
     /**
      * Ping the AzuraCast Central server to retrieve this installation's likely public-facing IP.
      *
+     * @param bool $cached
+     *
      * @return string|null
      */
-    public function getIp(): ?string
+    public function getIp(bool $cached = true): ?string
     {
-        $ip = $this->settings_repo->getSetting(Entity\Settings::EXTERNAL_IP);
+        $ip = ($cached)
+            ? $this->settings_repo->getSetting(Entity\Settings::EXTERNAL_IP)
+            : null;
 
         if (empty($ip)) {
-            $response = $this->http_client->request(
-                'GET',
-                self::BASE_URL.'/ip'
-            );
+            try {
+                $response = $this->http_client->request(
+                    'GET',
+                    self::BASE_URL . '/ip'
+                );
 
-            $body_raw = $response->getBody()->getContents();
-            $body = json_decode($body_raw, true);
+                $body_raw = $response->getBody()->getContents();
+                $body = json_decode($body_raw, true, 512, JSON_THROW_ON_ERROR);
 
-            $ip = $body['ip'] ?? null;
+                $ip = $body['ip'] ?? null;
+            } catch (Exception $e) {
+                $this->logger->error('Could not fetch remote IP: ' . $e->getMessage());
+                $ip = null;
+            }
 
-            if (!empty($ip)) {
+            if (!empty($ip) && $cached) {
                 $this->settings_repo->setSetting(Entity\Settings::EXTERNAL_IP, $ip);
             }
         }

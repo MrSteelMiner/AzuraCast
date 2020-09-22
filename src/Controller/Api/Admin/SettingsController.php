@@ -2,9 +2,10 @@
 namespace App\Controller\Api\Admin;
 
 use App\Entity;
+use App\Exception\ValidationException;
 use App\Http\Response;
 use App\Http\ServerRequest;
-use Doctrine\ORM\EntityManager;
+use Doctrine\ORM\EntityManagerInterface;
 use OpenApi\Annotations as OA;
 use Psr\Http\Message\ResponseInterface;
 use Symfony\Component\Serializer\Normalizer\AbstractNormalizer;
@@ -13,34 +14,25 @@ use Symfony\Component\Validator\Validator\ValidatorInterface;
 
 class SettingsController
 {
-    /** @var EntityManager */
-    protected $em;
+    protected EntityManagerInterface $em;
 
-    /** @var Serializer */
-    protected $serializer;
+    protected Serializer $serializer;
 
-    /** @var ValidatorInterface */
-    protected $validator;
+    protected ValidatorInterface $validator;
 
-    /** @var Entity\Repository\SettingsRepository */
-    protected $settings_repo;
+    protected Entity\Repository\SettingsRepository $settings_repo;
 
-    /** @var Entity\Api\Admin\Settings */
-    protected $api_settings;
+    protected Entity\Api\Admin\Settings $api_settings;
 
-    /**
-     * @param EntityManager $em
-     * @param Serializer $serializer
-     * @param ValidatorInterface $validator
-     */
-    public function __construct(EntityManager $em, Serializer $serializer, ValidatorInterface $validator)
-    {
+    public function __construct(
+        EntityManagerInterface $em,
+        Entity\Repository\SettingsRepository $settings_repo,
+        Serializer $serializer,
+        ValidatorInterface $validator
+    ) {
         $this->em = $em;
         $this->serializer = $serializer;
         $this->validator = $validator;
-
-        /** @var Entity\Repository\SettingsRepository $settings_repo */
-        $settings_repo = $em->getRepository(Entity\Settings::class);
 
         $this->settings_repo = $settings_repo;
         $all_settings = $settings_repo->fetchAll();
@@ -63,6 +55,7 @@ class SettingsController
      *
      * @param ServerRequest $request
      * @param Response $response
+     *
      * @return ResponseInterface
      */
     public function listAction(ServerRequest $request, Response $response): ResponseInterface
@@ -86,18 +79,20 @@ class SettingsController
      *
      * @param ServerRequest $request
      * @param Response $response
+     *
      * @return ResponseInterface
-     * @throws \App\Exception\Validation
+     * @throws ValidationException
      */
     public function updateAction(ServerRequest $request, Response $response): ResponseInterface
     {
-        $api_settings_obj = $this->serializer->denormalize($request->getParsedBody(), Entity\Api\Admin\Settings::class, null, [
-            AbstractNormalizer::OBJECT_TO_POPULATE => $this->api_settings,
-        ]);
+        $api_settings_obj = $this->serializer->denormalize($request->getParsedBody(), Entity\Api\Admin\Settings::class,
+            null, [
+                AbstractNormalizer::OBJECT_TO_POPULATE => $this->api_settings,
+            ]);
 
         $errors = $this->validator->validate($api_settings_obj);
         if (count($errors) > 0) {
-            throw new \App\Exception\Validation((string)$errors);
+            throw new ValidationException((string)$errors);
         }
 
         $api_settings = $this->serializer->normalize($api_settings_obj);

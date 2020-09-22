@@ -8,21 +8,21 @@ use OpenApi\Annotations as OA;
  */
 class StationServiceStatus
 {
+    /**
+     * @OA\Property(example=true)
+     * @var bool
+     */
+    public bool $backend_running;
+
+    /**
+     * @OA\Property(example=true)
+     * @var bool
+     */
+    public bool $frontend_running;
+
     public function __construct($backend_running, $frontend_running)
     {
         $this->backend_running = (bool)$backend_running;
         $this->frontend_running = (bool)$frontend_running;
     }
-
-    /**
-     * @OA\Property(example=true)
-     * @var bool
-     */
-    public $backend_running;
-
-    /**
-     * @OA\Property(example=true)
-     * @var bool
-     */
-    public $frontend_running;
 }

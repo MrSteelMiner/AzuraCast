@@ -1,85 +1,120 @@
 <?php
 namespace App\Controller\Api;
 
-use Azura\Http\RouterInterface;
-use Doctrine\ORM\EntityManager;
+use App\Exception\ValidationException;
+use App\Http\Response;
+use App\Http\ServerRequest;
+use App\Paginator\QueryPaginator;
+use App\Utilities;
+use Doctrine\ORM\EntityManagerInterface;
+use Doctrine\ORM\OptimisticLockException;
+use Doctrine\ORM\ORMException;
+use Doctrine\ORM\Query;
+use InvalidArgumentException;
+use Psr\Http\Message\ResponseInterface;
 use Symfony\Component\Serializer\Normalizer\ObjectNormalizer;
 use Symfony\Component\Serializer\Serializer;
 use Symfony\Component\Validator\Validator\ValidatorInterface;
 
 abstract class AbstractApiCrudController
 {
-    /** @var EntityManager */
-    protected $em;
+    protected EntityManagerInterface $em;
 
-    /** @var Serializer */
-    protected $serializer;
+    protected Serializer $serializer;
 
-    /** @var ValidatorInterface */
-    protected $validator;
+    protected ValidatorInterface $validator;
 
     /** @var string The fully-qualified (::class) class name of the entity being managed. */
-    protected $entityClass;
+    protected string $entityClass;
 
     /** @var string The route name used to generate the "self" links for each record. */
-    protected $resourceRouteName;
+    protected string $resourceRouteName;
 
-    /**
-     * @param EntityManager $em
-     * @param Serializer $serializer
-     * @param ValidatorInterface $validator
-     */
-    public function __construct(EntityManager $em, Serializer $serializer, ValidatorInterface $validator)
+    public function __construct(EntityManagerInterface $em, Serializer $serializer, ValidatorInterface $validator)
     {
         $this->em = $em;
         $this->serializer = $serializer;
         $this->validator = $validator;
     }
 
-    /**
-     * @param object $record
-     * @param RouterInterface $router
-     * @return mixed
-     */
-    protected function _viewRecord($record, RouterInterface $router)
+    protected function listPaginatedFromQuery(
+        ServerRequest $request,
+        Response $response,
+        Query $query,
+        callable $postProcessor = null
+    ): ResponseInterface {
+        $paginator = new QueryPaginator($query, $request);
+
+        $is_bootgrid = $paginator->isFromBootgrid();
+        $is_internal = ('true' === $request->getParam('internal', 'false'));
+
+        $postProcessor ??= function ($row) use ($is_bootgrid, $is_internal, $request) {
+            $return = $this->viewRecord($row, $request);
+
+            // Older jQuery Bootgrid requests should be "flattened".
+            if ($is_bootgrid && !$is_internal) {
+                return Utilities::flattenArray($return, '_');
+            }
+
+            return $return;
+        };
+        $paginator->setPostprocessor($postProcessor);
+
+        return $paginator->write($response);
+    }
+
+    protected function viewRecord($record, ServerRequest $request)
     {
         if (!($record instanceof $this->entityClass)) {
-            throw new \InvalidArgumentException(sprintf('Record must be an instance of %s.', $this->entityClass));
+            throw new InvalidArgumentException(sprintf('Record must be an instance of %s.', $this->entityClass));
         }
 
-        $return = $this->_normalizeRecord($record);
+        $return = $this->toArray($record);
+
+        $isInternal = ('true' === $request->getParam('internal', 'false'));
+        $router = $request->getRouter();
 
         $return['links'] = [
-            'self' => (string)$router->fromHere($this->resourceRouteName, ['id' => $record->getId()], [], true),
+            'self' => $router->fromHere($this->resourceRouteName, ['id' => $record->getId()], [], !$isInternal),
         ];
         return $return;
     }
 
     /**
-     * Modern version of $record->toArray().
-     *
      * @param object $record
      * @param array $context
+     *
      * @return array|mixed
      */
-    protected function _normalizeRecord($record, array $context = [])
+    protected function toArray($record, array $context = [])
     {
         return $this->serializer->normalize($record, null, array_merge($context, [
             ObjectNormalizer::ENABLE_MAX_DEPTH => true,
-            ObjectNormalizer::MAX_DEPTH_HANDLER => function ($innerObject, $outerObject, string $attributeName, string $format = null, array $context = array()) {
-                return $this->_displayShortenedObject($innerObject);
+            ObjectNormalizer::MAX_DEPTH_HANDLER => function (
+                $innerObject,
+                $outerObject,
+                string $attributeName,
+                string $format = null,
+                array $context = []
+            ) {
+                return $this->displayShortenedObject($innerObject);
             },
-            ObjectNormalizer::CIRCULAR_REFERENCE_HANDLER => function ($object, string $format = null, array $context = array()) {
-                return $this->_displayShortenedObject($object);
+            ObjectNormalizer::CIRCULAR_REFERENCE_HANDLER => function (
+                $object,
+                string $format = null,
+                array $context = []
+            ) {
+                return $this->displayShortenedObject($object);
             },
         ]));
     }
 
     /**
      * @param object $object
+     *
      * @return mixed
      */
-    protected function _displayShortenedObject($object)
+    protected function displayShortenedObject($object)
     {
         if (method_exists($object, 'getName')) {
             return $object->getName();
@@ -89,41 +124,41 @@ abstract class AbstractApiCrudController
     }
 
     /**
-     * @param array $data
+     * @param array|null $data
      * @param object|null $record
      * @param array $context
+     *
      * @return object
      */
-    protected function _editRecord($data, $record = null, array $context = []): object
+    protected function editRecord($data, $record = null, array $context = []): object
     {
         if (null === $data) {
-            throw new \InvalidArgumentException('Could not parse input data.');
+            throw new InvalidArgumentException('Could not parse input data.');
         }
 
-        $record = $this->_denormalizeToRecord($data, $record, $context);
+        $record = $this->fromArray($data, $record, $context);
 
         $errors = $this->validator->validate($record);
         if (count($errors) > 0) {
-            $e = new \App\Exception\Validation((string)$errors);
+            $e = new ValidationException((string)$errors);
             $e->setDetailedErrors($errors);
             throw $e;
         }
 
         $this->em->persist($record);
-        $this->em->flush($record);
+        $this->em->flush();
 
         return $record;
     }
 
     /**
-     * Modern equivalent of $object->fromArray($data).
-     *
      * @param array $data
      * @param object|null $record
      * @param array $context
+     *
      * @return object
      */
-    protected function _denormalizeToRecord($data, $record = null, array $context = []): object
+    protected function fromArray($data, $record = null, array $context = []): object
     {
         if (null !== $record) {
             $context[ObjectNormalizer::OBJECT_TO_POPULATE] = $record;
@@ -134,16 +169,17 @@ abstract class AbstractApiCrudController
 
     /**
      * @param object $record
-     * @throws \Doctrine\ORM\ORMException
-     * @throws \Doctrine\ORM\OptimisticLockException
+     *
+     * @throws ORMException
+     * @throws OptimisticLockException
      */
-    protected function _deleteRecord($record): void
+    protected function deleteRecord($record): void
     {
         if (!($record instanceof $this->entityClass)) {
-            throw new \InvalidArgumentException(sprintf('Record must be an instance of %s.', $this->entityClass));
+            throw new InvalidArgumentException(sprintf('Record must be an instance of %s.', $this->entityClass));
         }
 
         $this->em->remove($record);
-        $this->em->flush($record);
+        $this->em->flush();
     }
 }

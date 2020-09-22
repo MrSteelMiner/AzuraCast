@@ -2,48 +2,57 @@
 namespace App\Sync\Task;
 
 use App\Entity;
-use Doctrine\ORM\EntityManager;
+use Doctrine\ORM\EntityManagerInterface;
 use InfluxDB\Database;
-use Monolog\Logger;
+use Psr\Log\LoggerInterface;
 
 class Analytics extends AbstractTask
 {
-    /** @var Database  */
-    protected $influx;
+    protected Database $influx;
 
-    /**
-     * @param EntityManager $em
-     * @param Logger $logger
-     * @param Database $influx
-     */
-    public function __construct(EntityManager $em, Logger $logger, Database $influx)
-    {
-        parent::__construct($em, $logger);
+    public function __construct(
+        EntityManagerInterface $em,
+        Entity\Repository\SettingsRepository $settingsRepo,
+        LoggerInterface $logger,
+        Database $influx
+    ) {
+        parent::__construct($em, $settingsRepo, $logger);
 
         $this->influx = $influx;
     }
 
-    public function run($force = false): void
+    public function run(bool $force = false): void
     {
-        /** @var Entity\Repository\SettingsRepository $settings_repo */
-        $settings_repo = $this->em->getRepository(Entity\Settings::class);
-
-        $analytics_level = $settings_repo->getSetting('analytics', Entity\Analytics::LEVEL_ALL);
+        $analytics_level = $this->settingsRepo->getSetting('analytics', Entity\Analytics::LEVEL_ALL);
 
         if ($analytics_level === Entity\Analytics::LEVEL_NONE) {
-            $this->_purgeAnalytics();
-            $this->_purgeListeners();
-        } else if ($analytics_level === Entity\Analytics::LEVEL_NO_IP) {
-            $this->_purgeListeners();
+            $this->purgeAnalytics();
+            $this->purgeListeners();
+        } elseif ($analytics_level === Entity\Analytics::LEVEL_NO_IP) {
+            $this->purgeListeners();
         } else {
-            $this->_clearOldAnalytics();
+            $this->clearOldAnalytics();
         }
     }
 
-    protected function _clearOldAnalytics()
+    protected function purgeAnalytics(): void
+    {
+        $this->em->createQuery(/** @lang DQL */ 'DELETE FROM App\Entity\Analytics a')
+            ->execute();
+
+        $this->influx->query('DROP SERIES FROM /.*/');
+    }
+
+    protected function purgeListeners(): void
+    {
+        $this->em->createQuery(/** @lang DQL */ 'DELETE FROM App\Entity\Listener l')
+            ->execute();
+    }
+
+    protected function clearOldAnalytics(): void
     {
         // Clear out any non-daily statistics.
-        $this->em->createQuery(/** @lang DQL */'DELETE FROM App\Entity\Analytics a WHERE a.type != :type')
+        $this->em->createQuery(/** @lang DQL */ 'DELETE FROM App\Entity\Analytics a WHERE a.type != :type')
             ->setParameter('type', 'day')
             ->execute();
 
@@ -86,13 +95,13 @@ class Analytics extends AbstractTask
             }
         }
 
-        $this->em->createQuery(/** @lang DQL */'DELETE FROM App\Entity\Analytics a WHERE a.timestamp >= :earliest')
+        $this->em->createQuery(/** @lang DQL */ 'DELETE FROM App\Entity\Analytics a WHERE a.timestamp >= :earliest')
             ->setParameter('earliest', $earliest_timestamp)
             ->execute();
 
         $all_stations = $this->em->getRepository(Entity\Station::class)->findAll();
         $stations_by_id = [];
-        foreach($all_stations as $station) {
+        foreach ($all_stations as $station) {
             $stations_by_id[$station->getId()] = $station;
         }
 
@@ -111,19 +120,5 @@ class Analytics extends AbstractTask
         }
 
         $this->em->flush();
-    }
-
-    protected function _purgeAnalytics()
-    {
-        $this->em->createQuery(/** @lang DQL */'DELETE FROM App\Entity\Analytics a')
-            ->execute();
-
-        $this->influx->query('DROP SERIES FROM /.*/');
-    }
-
-    protected function _purgeListeners()
-    {
-        $this->em->createQuery(/** @lang DQL */'DELETE FROM App\Entity\Listener l')
-            ->execute();
     }
 }

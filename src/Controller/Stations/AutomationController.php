@@ -1,37 +1,29 @@
 <?php
 namespace App\Controller\Stations;
 
+use App\Config;
 use App\Form\Form;
 use App\Http\Response;
 use App\Http\ServerRequest;
+use App\Session\Flash;
+use App\Settings;
 use App\Sync\Task\RadioAutomation;
-use Azura\Config;
-use Azura\Settings;
-use Doctrine\ORM\EntityManager;
+use Doctrine\ORM\EntityManagerInterface;
+use Exception;
 use Psr\Http\Message\ResponseInterface;
 
 class AutomationController
 {
-    /** @var EntityManager */
-    protected $em;
+    protected EntityManagerInterface $em;
 
-    /** @var RadioAutomation */
-    protected $sync_task;
+    protected RadioAutomation $sync_task;
 
-    /** @var Settings */
-    protected $app_settings;
+    protected Settings $app_settings;
 
-    /** @var array */
-    protected $form_config;
+    protected array $form_config;
 
-    /**
-     * @param EntityManager $em
-     * @param RadioAutomation $sync_task
-     * @param Settings $app_settings
-     * @param Config $config
-     */
     public function __construct(
-        EntityManager $em,
+        EntityManagerInterface $em,
         RadioAutomation $sync_task,
         Settings $app_settings,
         Config $config
@@ -59,7 +51,7 @@ class AutomationController
             $this->em->persist($station);
             $this->em->flush();
 
-            $request->getSession()->flash(__('Changes saved.'), 'green');
+            $request->getFlash()->addMessage(__('Changes saved.'), Flash::SUCCESS);
 
             return $response->withRedirect($request->getUri());
         }
@@ -70,16 +62,17 @@ class AutomationController
         ]);
     }
 
-    public function runAction(ServerRequest $request, Response $response, $station_id): ResponseInterface
+    public function runAction(ServerRequest $request, Response $response): ResponseInterface
     {
         $station = $request->getStation();
 
         try {
             if ($this->sync_task->runStation($station, true)) {
-                $request->getSession()->flash('<b>' . __('Automated assignment complete!') . '</b>', 'green');
+                $request->getFlash()->addMessage('<b>' . __('Automated assignment complete!') . '</b>', Flash::SUCCESS);
             }
-        } catch (\Exception $e) {
-            $request->getSession()->flash('<b>' . __('Automated assignment error') . ':</b><br>' . $e->getMessage(), 'red');
+        } catch (Exception $e) {
+            $request->getFlash()->addMessage('<b>' . __('Automated assignment error') . ':</b><br>' . $e->getMessage(),
+                Flash::ERROR);
         }
 
         return $response->withRedirect($request->getRouter()->fromHere('stations:automation:index'));

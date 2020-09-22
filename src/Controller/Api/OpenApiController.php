@@ -1,25 +1,19 @@
 <?php
 namespace App\Controller\Api;
 
-
 use App\Http\Response;
 use App\Http\ServerRequest;
+use App\Settings;
 use App\Version;
-use Azura\Settings;
 use Psr\Http\Message\ResponseInterface;
+use function OpenApi\scan;
 
 class OpenApiController
 {
-    /** @var Settings */
-    protected $settings;
+    protected Settings $settings;
 
-    /** @var Version */
-    protected $version;
+    protected Version $version;
 
-    /**
-     * @param Settings $settings
-     * @param Version $version
-     */
     public function __construct(Settings $settings, Version $version)
     {
         $this->settings = $settings;
@@ -30,14 +24,14 @@ class OpenApiController
     {
         $router = $request->getRouter();
 
-        $api_base_url = (string)$router->fromHere(null, [], [], true);
+        $api_base_url = $router->fromHere(null, [], [], true);
         $api_base_url = str_replace('/openapi.yml', '', $api_base_url);
 
         define('AZURACAST_API_URL', $api_base_url);
         define('AZURACAST_API_NAME', 'This AzuraCast Installation');
         define('AZURACAST_VERSION', $this->version->getVersion());
 
-        $oa = \OpenApi\scan([
+        $oa = scan([
             $this->settings[Settings::BASE_DIR] . '/util/openapi.php',
             $this->settings[Settings::BASE_DIR] . '/src/Entity',
             $this->settings[Settings::BASE_DIR] . '/src/Controller/Api',
@@ -45,7 +39,7 @@ class OpenApiController
             'exclude' => [
                 'bootstrap',
                 'locale',
-                'templates'
+                'templates',
             ],
         ]);
 

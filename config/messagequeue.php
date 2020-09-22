@@ -1,10 +1,18 @@
 <?php
 // An array of message queue types and the DI classes responsible for handling them.
+use App\Message;
+use App\Radio\Backend\Liquidsoap;
+use App\Sync\Task;
+
 return [
-    \App\Message\AddNewMediaMessage::class        => \App\Sync\Task\Media::class,
-    \App\Message\ReprocessMediaMessage::class     => \App\Sync\Task\Media::class,
+    Message\AddNewMediaMessage::class => Task\Media::class,
+    Message\ReprocessMediaMessage::class => Task\Media::class,
 
-    \App\Message\UpdateNowPlayingMessage::class   => \App\Sync\Task\NowPlaying::class,
+    Message\WritePlaylistFileMessage::class => Liquidsoap\ConfigWriter::class,
 
-    \App\Message\BackupMessage::class             => \App\Sync\Task\Backup::class,
+    Message\UpdateNowPlayingMessage::class => Task\NowPlaying::class,
+
+    Message\BackupMessage::class => Task\Backup::class,
+
+    Message\DispatchWebhookMessage::class => App\Webhook\Dispatcher::class,
 ];

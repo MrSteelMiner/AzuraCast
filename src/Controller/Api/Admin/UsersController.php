@@ -9,8 +9,8 @@ use Psr\Http\Message\ResponseInterface;
 
 class UsersController extends AbstractAdminApiCrudController
 {
-    protected $entityClass = Entity\User::class;
-    protected $resourceRouteName = 'api:admin:user';
+    protected string $entityClass = Entity\User::class;
+    protected string $resourceRouteName = 'api:admin:user';
 
     /**
      * @OA\Get(path="/admin/users",
@@ -94,10 +94,10 @@ class UsersController extends AbstractAdminApiCrudController
      *
      * @inheritdoc
      */
-    public function deleteAction(ServerRequest $request, Response $response, $record_id): ResponseInterface
+    public function deleteAction(ServerRequest $request, Response $response, $id): ResponseInterface
     {
-        /** @var Entity\User $record */
-        $record = $this->_getRecord($record_id);
+        /** @var Entity\User|null $record */
+        $record = $this->_getRecord($id);
 
         if (null === $record) {
             return $response->withStatus(404)
@@ -111,7 +111,7 @@ class UsersController extends AbstractAdminApiCrudController
                 ->withJson(new Entity\Api\Error(403, __('You cannot remove yourself.')));
         }
 
-        $this->_deleteRecord($record);
+        $this->deleteRecord($record);
 
         return $response->withJson(new Entity\Api\Status(true, __('Record deleted successfully.')));
     }

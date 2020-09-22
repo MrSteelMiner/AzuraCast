@@ -2,45 +2,38 @@
 namespace App\Form;
 
 use App\Acl;
+use App\Config;
 use App\Entity;
 use App\Http\ServerRequest;
 use App\Radio\Configuration;
+use App\Settings;
 use App\Sync\Task\Media;
-use Azura\Config;
 use DeepCopy;
 use Doctrine\Common\Collections\Collection;
-use Doctrine\ORM\EntityManager;
+use Doctrine\ORM\EntityManagerInterface;
+use InvalidArgumentException;
+use RuntimeException;
 use Symfony\Component\Serializer\Serializer;
 use Symfony\Component\Validator\Validator\ValidatorInterface;
 
 class StationCloneForm extends StationForm
 {
-    /** @var Configuration */
-    protected $configuration;
+    protected Configuration $configuration;
 
-    /** @var Media */
-    protected $media_sync;
+    protected Media $media_sync;
 
-    /**
-     * StationCloneForm constructor.
-     * @param EntityManager $em
-     * @param Serializer $serializer
-     * @param ValidatorInterface $validator
-     * @param Acl $acl
-     * @param Configuration $configuration
-     * @param Media $media_sync
-     * @param Config $config
-     */
     public function __construct(
-        EntityManager $em,
+        EntityManagerInterface $em,
         Serializer $serializer,
         ValidatorInterface $validator,
+        Entity\Repository\StationRepository $station_repo,
         Acl $acl,
         Configuration $configuration,
         Media $media_sync,
-        Config $config
+        Config $config,
+        Settings $settings
     ) {
-        parent::__construct($em, $serializer, $validator, $acl, $config);
+        parent::__construct($em, $serializer, $validator, $station_repo, $acl, $config, $settings);
 
         $form_config = $config->get('forms/station_clone');
         $this->configure($form_config);
@@ -49,17 +42,14 @@ class StationCloneForm extends StationForm
         $this->media_sync = $media_sync;
     }
 
-    /**
-     * @inheritdoc
-     */
     public function process(ServerRequest $request, $record = null)
     {
         if (!$record instanceof Entity\Station) {
-            throw new \InvalidArgumentException('Record must be a station.');
+            throw new InvalidArgumentException('Record must be a station.');
         }
 
         $this->populate([
-            'name' => $record->getName().' - Copy',
+            'name' => $record->getName() . ' - Copy',
             'description' => $record->getDescription(),
         ]);
 
@@ -67,14 +57,24 @@ class StationCloneForm extends StationForm
             $data = $this->getValues();
 
             $copier = new DeepCopy\DeepCopy;
-            $copier->addFilter(new DeepCopy\Filter\Doctrine\DoctrineProxyFilter, new DeepCopy\Matcher\Doctrine\DoctrineProxyMatcher);
-            $copier->addFilter(new DeepCopy\Filter\KeepFilter, new DeepCopy\Matcher\PropertyMatcher(Entity\StationMedia::class, 'song'));
-            $copier->addFilter(new DeepCopy\Filter\KeepFilter, new DeepCopy\Matcher\PropertyMatcher(Entity\RolePermission::class, 'role'));
-            $copier->addFilter(new DeepCopy\Filter\KeepFilter, new DeepCopy\Matcher\PropertyMatcher(Entity\StationMediaCustomField::class, 'field'));
+            $copier->addFilter(new DeepCopy\Filter\Doctrine\DoctrineProxyFilter,
+                new DeepCopy\Matcher\Doctrine\DoctrineProxyMatcher);
+            $copier->addFilter(new DeepCopy\Filter\KeepFilter,
+                new DeepCopy\Matcher\PropertyMatcher(Entity\StationMedia::class, 'song'));
+            $copier->addFilter(new DeepCopy\Filter\KeepFilter,
+                new DeepCopy\Matcher\PropertyMatcher(Entity\RolePermission::class, 'role'));
+            $copier->addFilter(new DeepCopy\Filter\KeepFilter,
+                new DeepCopy\Matcher\PropertyMatcher(Entity\StationMediaCustomField::class, 'field'));
+
             $copier->addFilter(
                 new DeepCopy\Filter\Doctrine\DoctrineEmptyCollectionFilter,
                 new DeepCopy\Matcher\PropertyMatcher(Entity\Station::class, 'history')
             );
+            $copier->addFilter(
+                new DeepCopy\Filter\Doctrine\DoctrineEmptyCollectionFilter,
+                new DeepCopy\Matcher\PropertyMatcher(Entity\Station::class, 'sftp_users')
+            );
+
             $copier->addFilter(
                 new DeepCopy\Filter\Doctrine\DoctrineEmptyCollectionFilter,
                 new DeepCopy\Matcher\PropertyMatcher(Entity\StationPlaylist::class, 'media_items')
@@ -88,7 +88,7 @@ class StationCloneForm extends StationForm
                 'playlist_id',
                 'field_id',
             ];
-            foreach($global_unsets as $prop) {
+            foreach ($global_unsets as $prop) {
                 $copier->addFilter(new DeepCopy\Filter\SetNullFilter, new DeepCopy\Matcher\PropertyNameMatcher($prop));
             }
 
@@ -104,8 +104,9 @@ class StationCloneForm extends StationForm
                 'storage_used',
             ];
 
-            foreach($unset_values as $prop) {
-                $copier->addFilter(new DeepCopy\Filter\SetNullFilter, new DeepCopy\Matcher\PropertyMatcher(Entity\Station::class, $prop));
+            foreach ($unset_values as $prop) {
+                $copier->addFilter(new DeepCopy\Filter\SetNullFilter,
+                    new DeepCopy\Matcher\PropertyMatcher(Entity\Station::class, $prop));
             }
 
             if (!$data['clone_playlists']) {
@@ -138,6 +139,11 @@ class StationCloneForm extends StationForm
                     new DeepCopy\Filter\Doctrine\DoctrineEmptyCollectionFilter,
                     new DeepCopy\Matcher\PropertyMatcher(Entity\Station::class, 'media')
                 );
+            } else {
+                $copier->addFilter(
+                    new DeepCopy\Filter\Doctrine\DoctrineEmptyCollectionFilter,
+                    new DeepCopy\Matcher\PropertyMatcher(Entity\Station::class, 'playlists')
+                );
             }
 
             // Execute the Doctrine entity copy.
@@ -162,28 +168,51 @@ class StationCloneForm extends StationForm
             }
 
             // Set new radio base directory
-            $station_base_dir = dirname(APP_INCLUDE_ROOT) . '/stations';
-            $new_record->setRadioBaseDir($station_base_dir.'/'.$new_record->getShortName());
+            $station_base_dir = Settings::getInstance()->getStationDirectory();
+            $new_record->setRadioBaseDir($station_base_dir . '/' . $new_record->getShortName());
 
             // Persist all newly created records (and relations).
             $this->em->persist($new_record);
-            foreach($new_record->getMedia() as $subrecord) {
+            foreach ($new_record->getMedia() as $subrecord) {
+                /** @var Entity\StationMedia $subrecord */
+                $this->em->persist($subrecord);
+
+                foreach ($subrecord->getCustomFields() as $subrecord_custom_field) {
+                    $this->em->persist($subrecord_custom_field);
+                }
+
+                foreach ($subrecord->getPlaylists() as $subrecord_playlist_items) {
+                    /** @var Entity\StationPlaylistMedia $subrecord_playlist_items */
+                    $this->em->persist($subrecord_playlist_items);
+
+                    $playlist = $subrecord_playlist_items->getPlaylist();
+                    $this->em->persist($playlist);
+                }
+            }
+            foreach ($new_record->getMounts() as $subrecord) {
                 $this->em->persist($subrecord);
             }
-            foreach($new_record->getMounts() as $subrecord) {
+            foreach ($new_record->getPermissions() as $subrecord) {
                 $this->em->persist($subrecord);
             }
-            foreach($new_record->getPermissions() as $subrecord) {
+            foreach ($new_record->getPlaylists() as $subrecord) {
+                /** @var Entity\StationPlaylist $subrecord */
+                $this->em->persist($subrecord);
+
+                foreach ($subrecord->getScheduleItems() as $playlist_schedule_item) {
+                    $this->em->persist($playlist_schedule_item);
+                }
+            }
+            foreach ($new_record->getRemotes() as $subrecord) {
                 $this->em->persist($subrecord);
             }
-            foreach($new_record->getPlaylists() as $subrecord) {
+            foreach ($new_record->getStreamers() as $subrecord) {
+                /** @var Entity\StationStreamer $subrecord */
                 $this->em->persist($subrecord);
-            }
-            foreach($new_record->getRemotes() as $subrecord) {
-                $this->em->persist($subrecord);
-            }
-            foreach($new_record->getStreamers() as $subrecord) {
-                $this->em->persist($subrecord);
+
+                foreach ($subrecord->getScheduleItems() as $playlist_schedule_item) {
+                    $this->em->persist($playlist_schedule_item);
+                }
             }
             $this->em->flush();
 
@@ -211,6 +240,8 @@ class StationCloneForm extends StationForm
             // Run normal post-creation steps.
             $this->media_sync->importMusic($new_record);
 
+            $new_record = $this->em->find(Entity\Station::class, $new_record_id);
+
             $this->configuration->assignRadioPorts($new_record, true);
             $this->configuration->writeConfiguration($new_record);
 
@@ -228,8 +259,10 @@ class StationCloneForm extends StationForm
                 continue;
             }
 
-            if (is_dir($src .'/' . $file) && ($file !== '.') && ($file !== '..') ) {
-                mkdir($dest . '/' . $file);
+            if (is_dir($src . '/' . $file) && ($file !== '.') && ($file !== '..')) {
+                if (!mkdir($concurrentDirectory = $dest . '/' . $file) && !is_dir($concurrentDirectory)) {
+                    throw new RuntimeException(sprintf('Directory "%s" was not created', $concurrentDirectory));
+                }
                 $this->_copy($src . '/' . $file, $dest . '/' . $file);
             } else {
                 copy($src . '/' . $file, $dest . '/' . $file);

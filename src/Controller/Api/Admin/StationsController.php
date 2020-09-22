@@ -2,25 +2,30 @@
 namespace App\Controller\Api\Admin;
 
 use App\Entity;
-use Azura\Normalizer\DoctrineEntityNormalizer;
-use Doctrine\ORM\EntityManager;
+use App\Exception\ValidationException;
+use App\Normalizer\DoctrineEntityNormalizer;
+use Doctrine\ORM\EntityManagerInterface;
+use InvalidArgumentException;
 use OpenApi\Annotations as OA;
 use Symfony\Component\Serializer\Serializer;
 use Symfony\Component\Validator\Validator\ValidatorInterface;
 
 class StationsController extends AbstractAdminApiCrudController
 {
-    protected $entityClass = Entity\Station::class;
-    protected $resourceRouteName = 'api:admin:station';
+    protected string $entityClass = Entity\Station::class;
+    protected string $resourceRouteName = 'api:admin:station';
 
-    /** @var Entity\Repository\StationRepository */
-    protected $station_repo;
+    protected Entity\Repository\StationRepository $station_repo;
 
-    public function __construct(EntityManager $em, Serializer $serializer, ValidatorInterface $validator)
-    {
+    public function __construct(
+        EntityManagerInterface $em,
+        Serializer $serializer,
+        ValidatorInterface $validator,
+        Entity\Repository\StationRepository $station_repo
+    ) {
         parent::__construct($em, $serializer, $validator);
 
-        $this->station_repo = $em->getRepository(Entity\Station::class);
+        $this->station_repo = $station_repo;
     }
 
     /**
@@ -103,51 +108,50 @@ class StationsController extends AbstractAdminApiCrudController
      */
 
     /** @inheritDoc */
-    protected function _normalizeRecord($record, array $context = [])
+    protected function toArray($record, array $context = [])
     {
-        return parent::_normalizeRecord($record, $context + [
-            DoctrineEntityNormalizer::IGNORED_ATTRIBUTES => [
-                'adapter_api_key',
-                'nowplaying',
-                'nowplaying_timestamp',
-                'automation_timestamp',
-                'needs_restart',
-                'has_started',
-            ],
-        ]);
+        return parent::toArray($record, $context + [
+                DoctrineEntityNormalizer::IGNORED_ATTRIBUTES => [
+                    'adapter_api_key',
+                    'nowplaying',
+                    'nowplaying_timestamp',
+                    'automation_timestamp',
+                    'needs_restart',
+                    'has_started',
+                ],
+            ]);
     }
 
     /** @inheritDoc */
-    protected function _editRecord($data, $record = null, array $context = []): object
+    protected function editRecord($data, $record = null, array $context = []): object
     {
         $create_mode = (null === $record);
 
         if (null === $data) {
-            throw new \InvalidArgumentException('Could not parse input data.');
+            throw new InvalidArgumentException('Could not parse input data.');
         }
 
-        $record = $this->_denormalizeToRecord($data, $record, $context);
+        $record = $this->fromArray($data, $record, $context);
 
         $errors = $this->validator->validate($record);
         if (count($errors) > 0) {
-            $e = new \App\Exception\Validation((string)$errors);
+            $e = new ValidationException((string)$errors);
             $e->setDetailedErrors($errors);
             throw $e;
         }
 
+        $this->em->persist($record);
+        $this->em->flush();
+
         if ($create_mode) {
-            $this->station_repo->create($record);
-        } else {
-            $this->station_repo->edit($record);
+            return $this->station_repo->create($record);
         }
 
-        $this->em->persist($record);
-        $this->em->flush($record);
-        return $record;
+        return $this->station_repo->edit($record);
     }
 
     /** @inheritDoc */
-    protected function _deleteRecord($record): void
+    protected function deleteRecord($record): void
     {
         $this->station_repo->destroy($record);
     }
